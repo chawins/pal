@@ -1,0 +1,13 @@
+__pycache__
+*.egg-info
+tmp*
+results/
+test_cases_*
+*.log
+*wandb*
+logs/
+figures/
+plot.ipynb
+_tmp*
+_tmp/
+gen_outputs/
