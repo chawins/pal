@@ -27,7 +27,7 @@ pip install transformers==4.35.2 fschat==0.2.34
 ```bash
 # Run GCG attack on llama-2-7b-chat-hf model with a small batch size of 16
 bash example_run_main.sh
-# Gather experiment results and print as a table (more detail later)
+# Gather experiment results and print them as a table (more detail later)
 python gather_results.py
 ```
 
@@ -58,8 +58,8 @@ In `main.py`:
 torch.use_deterministic_algorithms(True)
 ```
 
-Even when these two are enabled, we observe a slight difference between gradients computed with and without KV-cache (may also due to half precision).
-For example, in GCG attack, the order of the top-k can shift slightly when k is large, but overall most of the tokens are the same.
+Even when these two are enabled, we observe a slight difference between gradients computed with and without KV-cache (may also be due to half precision).
+For example, in the GCG attack, the order of the top-k can shift slightly when k is large, but overall most of the tokens are the same.
 This can result in a different adversarial suffix.
 
 ## Code Structure
@@ -67,16 +67,16 @@ This can result in a different adversarial suffix.
 ### Main Files
 
 - `main.py`: Main file for running attacks.
-- `gather_results.py`: Gather results from log files and print as a table. If you are modifying this file for your own purpose (e.g., print specific results, etc.), please make an untracked copy.
+- `gather_results.py`: Gather results from log files and print them as a table.
 
 ### `Src`
 
 Most of the attack and model code is in `src/`.
 
-- `attacks` contains all the attack algorithm. To add a new attack, create a new file in this directory and import and add your attack to `_ATTACKS_DICT` in `attacks/__init__.py`. We highly recommend extending `BaseAttack` class in `attacks/base.py` for your attack. See `attacks/gcg.py` or `attacks/gcg_random.py` for examples.
+- `attacks` contains all the attack algorithms. To add a new attack, create a new file in this directory and import and add your attack to `_ATTACKS_DICT` in `attacks/__init__.py`. We highly recommend extending `BaseAttack` class in `attacks/base.py` for your attack. See `attacks/gcg.py` or `attacks/gcg_random.py` for examples.
   - `attacks/gcg.py`: contains our GCG++ which is built from a minimal version of the original GCG attack ([code](https://github.com/llm-attacks/llm-attacks), [paper](https://arxiv.org/abs/2307.15043)).
-  - `attacks/gcg_random.py`: RAL attack.
-  - `attacks/bproxy.py`: PAL attack.
+  - `attacks/ral.py`: Our RAL attack.
+  - `attacks/pal.py`: Our PAL attack.
 - `models` contains various model interfaces.
 - `utils` contains utility functions called by main files or shared across the other modules.
 
@@ -84,7 +84,7 @@ Most of the attack and model code is in `src/`.
 
 ### PAL Attack
 
-To fine-tune proxy model, `config.finetune=True`. Below are the available fine-tuning options.
+To fine-tune the proxy model, `config.finetune=True`. Below are the available fine-tuning options.
 
 - Fine-tune with pure `bfloat16`: `config.pure_bf16=True`. This is recommended and uses much less memory than `float16`.
 - Fine-tune with mixed precision (`float16`): `config.use_fp16=True`. Both `use_fp16` and `pure_bf16` cannot be `True` at the same time.
@@ -95,7 +95,7 @@ Notes
 
 - Use a larger learning rate when fine-tuning with PEFT (e.g., `1e-3`).
 - For 7B models and `pure_bf16` on one A100, `config.mini_batch_size <= 128` and `config.proxy_tune_bs < 64`. `proxy_tune_bs` of 64 will fail on some longer prompts. Use `proxy_tune_bs` of 32 to be safe.
-- Cannot train a 7B model with `use_fp16` on one A100 even with batch size of 1.
+- Cannot train a 7B model with `use_fp16` on one A100 even with a batch size of 1.
 
 ### OpenAI API
 
