@@ -4,9 +4,11 @@ Chawin Sitawarin<sup>1</sup> &nbsp; Norman Mu<sup>1</sup> &nbsp; David Wagner<su
 
 <sup>1</sup>University of California, Berkeley &nbsp; <sup>2</sup>New York University
 
+> UPDATE (March 17, 2024): This [change](https://twitter.com/brianryhuang/status/1763438814515843119) made by OpenAI may affect the success of this attack. 
+
 ## Abstract
 
-
+Large Language Models (LLMs) have surged in popularity in recent months, but they have demonstrated concerning capabilities to generate harmful content when manipulated. While techniques like safety fine-tuning aim to minimize harmful use, recent works have shown that LLMs remain vulnerable to attacks that elicit toxic responses. In this work, we introduce the Proxy-Guided Attack on LLMs (PAL), the first optimization-based attack on LLMs in a black-box query-only setting. In particular, it relies on a surrogate model to guide the optimization and a sophisticated loss designed for real-world LLM APIs. Our attack achieves 84% attack success rate (ASR) on GPT-3.5-Turbo and 48% on Llama-2-7B, compared to 4% for the current state of the art. We also propose GCG++, an improvement to the GCG attack that reaches 94% ASR on white-box Llama-2-7B, and the Random-Search Attack on LLMs (RAL), a strong but simple baseline for query-based attacks. We believe the techniques proposed in this work will enable more comprehensive safety testing of LLMs and, in the long term, the development of better security guardrails.
 
 ## Install Dependencies
 
