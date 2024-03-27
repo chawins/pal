@@ -116,6 +116,16 @@ class CohereTokenizer:
     def _parse_ids(self, ids):
         return ids
 
+    def _detokenize(self, tokens: list[int]) -> str:
+        try:
+            text = self._co.detokenize(
+                tokens=tokens, model=self._model_name
+            ).text
+        except json.decoder.JSONDecodeError as e:
+            logger.warning("Error found in cohere.detokenize: %s", str(e))
+            return ""
+        return text
+
     def decode(self, ids, **kwargs) -> str:
         _ = kwargs  # unused
         if isinstance(ids, torch.Tensor):
@@ -125,7 +135,7 @@ class CohereTokenizer:
         assert isinstance(ids, list) and isinstance(
             ids[0], int
         ), f"ids must be list or int, got {type(ids)} {ids}"
-        decoded = self._co.detokenize(tokens=ids, model=self._model_name).text
+        decoded = self._detokenize(ids)
         return decoded
 
     def batch_decode(self, ids, **kwargs) -> list[str]:
@@ -141,10 +151,7 @@ class CohereTokenizer:
             and isinstance(ids[0], list)
             and isinstance(ids[0][0], int)
         ), f"ids must be list of list of int, got {type(ids)} {ids}"
-        decoded_list = [
-            self._co.detokenize(tokens=i, model=self._model_name).text
-            for i in ids
-        ]
+        decoded_list = [self._detokenize(i) for i in ids]
         return decoded_list
 
 

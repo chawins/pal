@@ -1,3 +1,4 @@
+import json
 import logging
 import multiprocessing as mp
 import os
@@ -50,6 +51,8 @@ def call_cohere(client: cohere.Client, messages: str, **kwargs):
                 cohere.TooManyRequestsError,
                 cohere.InternalServerError,
                 cohere.ServiceUnavailableError,
+                cohere.core.api_error.ApiError,
+                json.decoder.JSONDecodeError,
             ) as e:
                 if retry == max_retries - 1:
                     print(f"Error after {retry} retries: {e}\n{params}")
