@@ -1,5 +1,4 @@
 import copy
-import json
 import logging
 from typing import Literal
 
@@ -10,7 +9,11 @@ import torch
 from src.message import Message, Role
 from src.models.base import BaseModel, Encoded, LossOutput
 from src.models.model_input import ModelInputIds, ModelInputs
-from src.servers.cohere_server import Queues, standalone_server
+from src.servers.cohere_server import (
+    EXCEPT_COHERE_ERRORS,
+    Queues,
+    standalone_server,
+)
 from src.utils.cohere_non_ascii import COHERE_NON_ASCII
 from src.utils.suffix import SuffixManager, build_prompt
 from src.utils.types import BatchTokenIds
@@ -20,15 +23,23 @@ logger = logging.getLogger(__name__)
 
 class Response:
     def __init__(
-        self, raw_response: cohere.Generation, stream: bool = False
+        self, raw_response: cohere.Generation | None, stream: bool = False
     ) -> None:
         self.response = raw_response
         self.stream = stream
         self.complete = False
+
         if self.stream:
+            raise NotImplementedError(
+                "Streaming is not implemented for Cohere API!"
+            )
+            # pylint: disable=unreachable
             self.response_iter = iter(self.response)
         else:
-            self.response = raw_response.generations[0].text
+            if raw_response is None:
+                self.response = ""
+            else:
+                self.response = raw_response.generations[0].text
 
     def __iter__(self):
         return self
@@ -43,8 +54,10 @@ class Response:
 
         try:
             chunk = next(self.response_iter)
-            delta = chunk.choices[0].delta
-            # return delta.get("content", "")
+            raise NotImplementedError(
+                "Streaming is not implemented for Cohere API!"
+            )
+            delta = chunk.choices[0].delta  # pylint: disable=unreachable
             return delta.content
         except StopIteration as e:
             self.complete = True
@@ -90,7 +103,7 @@ class CohereTokenizer:
         def tokenize(t):
             try:
                 ids = self._co.tokenize(text=t, model=self._model_name).tokens
-            except json.decoder.JSONDecodeError as e:
+            except EXCEPT_COHERE_ERRORS as e:
                 logger.warning("Error found in cohere.tokenize: %s", str(e))
                 return []
             return ids
@@ -121,7 +134,7 @@ class CohereTokenizer:
             text = self._co.detokenize(
                 tokens=tokens, model=self._model_name
             ).text
-        except json.decoder.JSONDecodeError as e:
+        except EXCEPT_COHERE_ERRORS as e:
             logger.warning("Error found in cohere.detokenize: %s", str(e))
             return ""
         return text
@@ -190,7 +203,6 @@ class CohereModel(BaseModel):
         self.stop = stop
         self.frequency_penalty = frequency_penalty
         self.presence_penalty = presence_penalty
-        self._bias = 20  # NOTE: any harm setting it to 100?
         self.logit_bias = logit_bias or {}
         self.template = template_name
         self.client = cohere.Client()
@@ -377,10 +389,13 @@ class CohereModel(BaseModel):
         _ = logit_bias, echo, echo_len, api_key, logprobs, prompt
         prompt = build_prompt(messages, template_name=self.template)
         logger.debug("Cohere prompt: %s", prompt)
-        response = self.client.generate(
-            prompt=prompt,
-            max_tokens=self.max_tokens,
-            **self.request_kwargs,
-        )
-        response = Response(response)
-        return response
+        try:
+            response = self.client.generate(
+                prompt=prompt,
+                max_tokens=self.max_tokens,
+                **self.request_kwargs,
+            )
+        except EXCEPT_COHERE_ERRORS as e:
+            logger.warning("Error found in cohere.generate: %s", str(e))
+            response = None
+        return Response(response)

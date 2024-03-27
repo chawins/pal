@@ -12,6 +12,17 @@ from tqdm import tqdm
 from src.servers.common import GLOBAL_PROCESS_LIST, kill_servers
 
 _BASE_SLEEP_TIME = 3
+EXCEPT_COHERE_ERRORS = (
+    cohere.BadRequestError,
+    cohere.TooManyRequestsError,
+    cohere.InternalServerError,
+    cohere.ServiceUnavailableError,
+    cohere.core.api_error.ApiError,
+    json.decoder.JSONDecodeError,
+    cohere.errors.internal_server_error.InternalServerError,
+    cohere.errors.too_many_requests_error.TooManyRequestsError,
+    cohere.errors.service_unavailable_error.ServiceUnavailableError,
+)
 
 Completions = list[cohere.Generation]
 Queues = tuple[mp.Queue, mp.Queue]
@@ -46,14 +57,7 @@ def call_cohere(client: cohere.Client, messages: str, **kwargs):
         while retry < max_retries:
             try:
                 return f(params)
-            except (
-                cohere.BadRequestError,
-                cohere.TooManyRequestsError,
-                cohere.InternalServerError,
-                cohere.ServiceUnavailableError,
-                cohere.core.api_error.ApiError,
-                json.decoder.JSONDecodeError,
-            ) as e:
+            except EXCEPT_COHERE_ERRORS as e:
                 if retry == max_retries - 1:
                     print(f"Error after {retry} retries: {e}\n{params}")
                     if "This model does not support the 'logprobs'" in str(e):
