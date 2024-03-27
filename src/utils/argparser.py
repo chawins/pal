@@ -38,7 +38,10 @@ def parse_args(argv) -> argparse.Namespace:
         nargs="+",
         type=str,
         default=None,
-        help="Names or indices of behaviors to evaluate in the scenario (defaults to None = all).",
+        help=(
+            "Names or indices of behaviors to evaluate in the scenario "
+            "(defaults to None = all)."
+        ),
     )
     parser.add_argument(
         "--use_system_instructions",

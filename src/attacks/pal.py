@@ -81,7 +81,7 @@ class AttackVer(Enum):
 class PalAttack(GCGAttack):
     """Better Proxy Attack."""
 
-    name: str = "bproxy"
+    name: str = "pal"
 
     def __init__(
         self,

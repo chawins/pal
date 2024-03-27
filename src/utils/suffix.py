@@ -6,7 +6,7 @@ import torch
 from fastchat.conversation import get_conv_template
 
 # Register new conv. pylint: disable=unused-import
-import src.utils.gpt_conv  # noqa: F401
+from src.utils import cohere_conv, gpt_conv  # noqa: F401
 from src.message import Message, Role
 from src.models.model_input import ModelInputIds
 
@@ -25,6 +25,7 @@ class SuffixManager:
         "raw",
         "openchat_3.5",
         "orca-2",
+        "cohere",
     )
 
     def __init__(self, *, tokenizer, use_system_instructions, conv_template):
@@ -35,6 +36,7 @@ class SuffixManager:
             use_system_instructions: Whether to use system instructions.
             conv_template: Conversation template.
         """
+        logger.debug("Initializing SuffixManager...")
         self.tokenizer = tokenizer
         self.use_system_instructions = use_system_instructions
         self.conv_template = conv_template
@@ -49,7 +51,7 @@ class SuffixManager:
             assert self.conv_template.sep == " ", self.conv_template.sep
             self.num_tok_sep = 0
 
-        if self.conv_template.sep2 is not None:
+        if self.conv_template.sep2 not in (None, ""):
             self.num_tok_sep2 = len(
                 self.tokenizer(
                     self.conv_template.sep2, add_special_tokens=False
@@ -133,7 +135,7 @@ class SuffixManager:
         if user_msg:
             if (
                 adv_suffix.startswith(" ")
-                and self.conv_template.name == "chatgpt"
+                and self.conv_template.name in ("chatgpt", "cohere")
             ):
                 self.conv_template.update_last_message(
                     f"{user_msg}{adv_suffix}"

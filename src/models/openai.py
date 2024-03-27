@@ -17,9 +17,9 @@ from openai.types.chat.chat_completion_token_logprob import TopLogprob
 from tenacity import retry, retry_if_not_exception_type, wait_random_exponential
 
 from src.message import Message, Role
-from src.models.base import BaseModel, LossOutput
+from src.models.base import BaseModel, Encoded, LossOutput
 from src.models.model_input import ModelInputIds, ModelInputs
-from src.models.server import Queues, standalone_server
+from src.servers.openai_server import Queues, standalone_server
 from src.utils.suffix import SuffixManager, build_prompt
 from src.utils.types import BatchTokenIds, TokenIds
 
@@ -45,11 +45,6 @@ COMPLETION_MODELS = [
 ]
 
 logger = logging.getLogger(__name__)
-
-
-@dataclasses.dataclass
-class Encoded:
-    input_ids: torch.Tensor | list[int] | np.ndarray
 
 
 class GptTokenizer:

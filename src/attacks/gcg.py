@@ -63,7 +63,7 @@ class GCGAttack(BaseAttack):
         self._cur_num_coords = self._num_coords[0]
 
     def _on_step_begin(self, *args, **kwargs):
-        """Exectued at the beginning of each step."""
+        """Executed at the beginning of each step."""
         self._cur_num_coords = round(
             self._num_coords[0]
             + (self._num_coords[1] - self._num_coords[0])
@@ -139,7 +139,8 @@ class GCGAttack(BaseAttack):
             rand_idx = _rand_permute(
                 (len(optim_ids), self._topk, 1), device=device, dim=1
             )
-            # Get the first (roughly) batch_size / seq_len indices at each position
+            # Get the first (roughly) batch_size / seq_len indices at each
+            # position
             rand_idx = torch.cat(
                 [
                     r[: (new_token_pos == i).sum()]

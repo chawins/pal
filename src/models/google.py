@@ -76,7 +76,9 @@ class GoogleTextModel(BaseModel):
         if api_key is not None:
             palm.configure(api_key=api_key)
 
-        prompt = build_prompt(messages) if len(messages) > 0 else messages[0].content
+        prompt = (
+            build_prompt(messages) if len(messages) > 0 else messages[0].content
+        )
         try:
             completion = palm.generate_text(
                 model="models/" + self.model,

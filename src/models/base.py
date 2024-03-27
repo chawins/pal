@@ -1,6 +1,7 @@
 import dataclasses
 from typing import Iterable, List
 
+import numpy as np
 import torch
 from jaxtyping import Float
 from torch import Tensor
@@ -21,6 +22,11 @@ class LossOutput:
     texts: List[str] | None = None
     num_queries: int = 0
     num_tokens: int = 0
+
+
+@dataclasses.dataclass
+class Encoded:
+    input_ids: torch.Tensor | list[int] | np.ndarray
 
 
 class BaseModel:

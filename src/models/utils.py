@@ -3,12 +3,14 @@ import os
 
 import fastchat
 import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
 from src.message import Message
 from src.models.base import BaseModel
+from src.models.cohere import CohereModel, CohereTokenizer
 from src.models.openai import OpenAIModel
 from src.utils.suffix import SuffixManager
 from src.utils.types import PrefixCache
-from transformers import AutoModelForCausalLM, AutoTokenizer
 
 logger = logging.getLogger(__name__)
 
@@ -20,9 +22,13 @@ def load_model_and_tokenizer(
     **kwargs,
 ) -> tuple[BaseModel, AutoTokenizer, SuffixManager]:
     """Load model, tokenizer, and suffix manager."""
-    if any(kw in model_name for kw in ("gpt", "davinci")):
+    if any(kw in model_name for kw in ("gpt", "davinci", "cohere")):
         template_name, model_path = model_name.split("@")
-        wrapped_model = OpenAIModel(
+        if "cohere" in model_name:
+            model_class = CohereModel
+        else:
+            model_class = OpenAIModel
+        wrapped_model = model_class(
             model_path,
             template_name=template_name,
             num_api_processes=num_api_processes,
@@ -110,6 +116,13 @@ def batchify_kv_cache(prefix_cache, batch_size):
 
 
 def get_nonascii_toks(tokenizer, device="cpu") -> torch.Tensor:
+    logger.debug("Gathering non-ascii tokens...")
+
+    # Hack to get non-ascii from Cohere. Cohere uses API tokenizer which is
+    # way too slow to rerun every time.
+    if isinstance(tokenizer, CohereTokenizer):
+        return torch.tensor(tokenizer.non_ascii, device=device)
+
     def is_ascii(s):
         return s.isascii() and s.isprintable()
 
@@ -117,7 +130,7 @@ def get_nonascii_toks(tokenizer, device="cpu") -> torch.Tensor:
     for i in range(3, tokenizer.vocab_size):
         try:
             tok = tokenizer.decode([i])
-        except:  # noqa: E722, pylint: disable=bare-except
+        except:  # noqa: E722, pylint: bare-except
             # GPT tokenizer throws an error for some tokens
             # pyo3_runtime.PanicException: no entry found for key
             non_ascii_toks.append(i)
@@ -135,6 +148,7 @@ def get_nonascii_toks(tokenizer, device="cpu") -> torch.Tensor:
         non_ascii_toks.append(tokenizer.unk_token_id)
     non_ascii_toks = list(set(non_ascii_toks))
 
+    logger.debug("Finished getting non-ascii tokens.")
     return torch.tensor(non_ascii_toks, device=device)
 
 

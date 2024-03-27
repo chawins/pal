@@ -11,3 +11,4 @@ plot.ipynb
 _tmp*
 _tmp/
 gen_outputs/
+.vscode/

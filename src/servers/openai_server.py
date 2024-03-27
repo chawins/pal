@@ -1,8 +1,6 @@
 import logging
 import multiprocessing as mp
 import os
-import signal
-import sys
 import time
 from typing import Literal
 
@@ -10,7 +8,8 @@ import openai
 from openai import OpenAI
 from tqdm import tqdm
 
-global_process_list = []
+from src.servers.common import GLOBAL_PROCESS_LIST, kill_servers
+
 _BASE_SLEEP_TIME = 3
 
 ChatMessages = list[dict[str, str]]
@@ -130,16 +129,9 @@ def init_servers(number_of_processes: int = 4):
         p = mp.Process(target=openai_chat_server, args=(call_queue, i == 0))
         p.daemon = True
         p.start()
-        global_process_list.append(p)
+        GLOBAL_PROCESS_LIST.append(p)
 
     return call_queue, global_manager
-
-
-def kill_servers():
-    """Kill all processes."""
-    for p in global_process_list:
-        p.terminate()
-        p.join()
 
 
 def standalone_server(
@@ -193,13 +185,3 @@ def standalone_server(
         kill_servers()
         return responses
     return responses, (queue, resp_queue)
-
-
-def graceful_exit(sig, frame):
-    """Kill all processes on SIGINT."""
-    _ = sig, frame  # Unused
-    kill_servers()
-    sys.exit()
-
-
-signal.signal(signal.SIGINT, graceful_exit)

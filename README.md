@@ -4,7 +4,7 @@ Chawin Sitawarin<sup>1</sup> &nbsp; Norman Mu<sup>1</sup> &nbsp; David Wagner<su
 
 <sup>1</sup>University of California, Berkeley &nbsp; <sup>2</sup>New York University
 
-> UPDATE (March 17, 2024): This [change](https://twitter.com/brianryhuang/status/1763438814515843119) made by OpenAI may affect the success of this attack. 
+> UPDATE (March 17, 2024): This [change](https://twitter.com/brianryhuang/status/1763438814515843119) made by OpenAI may affect the success of this attack.
 
 ## Abstract
 
@@ -39,7 +39,7 @@ python gather_results.py
 
 ### Where to find the attack results
 
-- Log path is given by `./results/<MODEL>/<ATTACK>/<EXP>/<SCENARIO>_<BEHAVIOR>.jsonl`. Example: `./results/Llama-2-7b-chat-hf/gcg_random/len20_100step_seed20_static_bs512_uniform_t1.0_c8-1/Toxicity_0.jsonl`
+- Log path is given by `./results/<MODEL>/<ATTACK>/<EXP>/<SCENARIO>_<BEHAVIOR>.jsonl`. Example: `./results/Llama-2-7b-chat-hf/ral/len20_100step_seed20_static_bs512_uniform_t1.0_c8-1/Toxicity_0.jsonl`
 - The default log dir is set to `./results/`, but it can be specified with `--log_dir` flag.
 - `<ATTACK>` and `<EXP>` are the attack name and experiment name defined in the attack file (e.g., `./src/attacks/gcg.py`). See `_get_name_tokens()`.
 
@@ -75,7 +75,7 @@ This can result in a different adversarial suffix.
 
 Most of the attack and model code is in `src/`.
 
-- `attacks` contains all the attack algorithms. To add a new attack, create a new file in this directory and import and add your attack to `_ATTACKS_DICT` in `attacks/__init__.py`. We highly recommend extending `BaseAttack` class in `attacks/base.py` for your attack. See `attacks/gcg.py` or `attacks/gcg_random.py` for examples.
+- `attacks` contains all the attack algorithm. To add a new attack, create a new file in this directory and import and add your attack to `_ATTACKS_DICT` in `attacks/__init__.py`. We highly recommend extending `BaseAttack` class in `attacks/base.py` for your attack. See `attacks/gcg.py` or `attacks/ral.py` for examples.
   - `attacks/gcg.py`: contains our GCG++ which is built from a minimal version of the original GCG attack ([code](https://github.com/llm-attacks/llm-attacks), [paper](https://arxiv.org/abs/2307.15043)).
   - `attacks/ral.py`: Our RAL attack.
   - `attacks/pal.py`: Our PAL attack.

@@ -15,12 +15,13 @@ import transformers
 import yaml
 from absl import app
 from ml_collections import config_flags
+
 from rules import scenarios
 from src import attacks, models
 from src.message import Message, Role
 from src.models import utils as models_utils
 from src.models.base import BaseModel
-from src.models.server import kill_servers
+from src.servers.openai_server import kill_servers
 from src.utils import argparser
 from src.utils.log import setup_logger
 from src.utils.suffix import build_prompt
@@ -257,6 +258,7 @@ def main(argv):
         num_api_processes=args.num_api_processes,
     )
     wrapped_model, tokenizer, suffix_manager = loaded
+    logger.info("Finished loading model.")
 
     if args.init_suffix_path:
         # Load init suffix from path
