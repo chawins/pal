@@ -26,6 +26,7 @@ class SuffixManager:
         "openchat_3.5",
         "orca-2",
         "cohere",
+        "mistral",
     )
 
     def __init__(self, *, tokenizer, use_system_instructions, conv_template):
@@ -223,10 +224,11 @@ class SuffixManager:
         if len(new_suffix_ids) != len(suffix_ids):
             logger.warning(
                 "New suffix ids after get_input_ids() is different from the "
-                "original\nsuffix_ids:%s\nnew_suffix_ids:%s",
+                "original\nsuffix_ids: %s\nnew_suffix_ids: %s",
                 suffix_ids,
                 new_suffix_ids,
             )
+            new_suffix_ids = suffix_ids
         target_ids = orig_input_ids[target_slice]
         assert target_ids.ndim == 1, target_ids.shape
         target_ids.requires_grad_(False)

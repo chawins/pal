@@ -9,6 +9,7 @@ from pathlib import Path
 
 import torch
 import yaml
+from openai import OpenAI
 from rules import scenarios
 from src import models
 from src.message import Message, Role
@@ -16,6 +17,8 @@ from src.models import SYSTEM_MESSAGES
 from src.models import utils as models_utils
 from src.models.base import BaseModel
 from tqdm import tqdm
+
+CLIENT = OpenAI()
 
 
 def build_messages_and_target(
@@ -109,6 +112,19 @@ def evaluate_suffix(
     return result.passed, messages_list
 
 
+def openai_content_mod(gen_output: str):
+    response = CLIENT.moderations.create(input=gen_output)
+    output = response.results[0]
+    if not output.flagged:
+        return None
+    scores_dict = {}
+    category_scores = output.category_scores.dict()
+    for category, flagged in output.categories.dict().items():
+        if flagged:
+            scores_dict[category] = category_scores[category]
+    return scores_dict
+
+
 def main(args):
     # e.g., results/Llama-2-7b-chat-hf/ral/len20_100000query_bs32_seed20_l50_cw-one-0.001_static_visited_uniform_t1.0_c1
     result_path = Path(args.result_path)
@@ -121,23 +137,23 @@ def main(args):
     device = "cuda" if torch.cuda.is_available() else "cpu"
     # Load the model and the tokenizer
     model_path = str(Path(f"~/data/models/{model_name}").expanduser())
-    if "Llama" in model_name:
-        template = "llama-2"
-        args.system_message = "llama_default"
-    elif "vicuna" in model_name:
-        template = "vicuna_v1.1"
-        args.system_message = "vicuna_default"
-    elif "gpt" in model_name:
-        template = "chatgpt"
-        args.system_message = "helpful"
-    elif "openchat-3.5-1210" in model_name:
-        template = "openchat_3.5"
-        args.system_message = "helpful"
-    else:
-        raise ValueError(f"Unknown model {model_name}!")
 
     wrapped_model = None
     if args.regenerate_outputs:
+        if "Llama" in model_name:
+            template = "llama-2"
+            args.system_message = "llama_default"
+        elif "vicuna" in model_name:
+            template = "vicuna_v1.1"
+            args.system_message = "vicuna_default"
+        elif "gpt" in model_name:
+            template = "chatgpt"
+            args.system_message = "helpful"
+        elif "openchat-3.5-1210" in model_name:
+            template = "openchat_3.5"
+            args.system_message = "helpful"
+        else:
+            raise ValueError(f"Unknown model {model_name}!")
         wrapped_model = models_utils.load_model_and_tokenizer(
             f"{template}@{model_path}",
             low_cpu_mem_usage=True,
@@ -205,7 +221,8 @@ def main(args):
                 args.use_system_instructions,
             )
 
-        outputs = []
+        outputs, filtered_outputs = [], []
+        is_flagged_by_openai = False
         is_any_success = False
         print(f"Running inference on {len(lines)} suffixes...")
         for j, line in enumerate(tqdm(lines)):
@@ -213,6 +230,7 @@ def main(args):
                 break
             if line["step"] > args.max_step:
                 break
+
             if args.regenerate_outputs:
                 passed, messages = eval_suffix(line["suffix"])
                 assert passed == line["passed"]
@@ -230,14 +248,23 @@ def main(args):
                     sys_msg = SYSTEM_MESSAGES[args.system_message]
                     prompt += f"[System]: {sys_msg}\n"
                 prompt += f"[User]: {behavior} {line['suffix']}\n"
-                outputs.append(
+                output = (
                     f">>> {'FAIL' if passed else 'SUCCEED'}: step="
                     f"{line['step']}, queries={line['queries']}\n"
-                    f"{prompt}{line['generated']}"
+                    f"{prompt}{line['generated'].strip()}"
                 )
+                if args.openai_filter:
+                    scores_dict = openai_content_mod(line["generated"])
+                    if scores_dict is not None:
+                        filtered_outputs.append(output + f"\n{scores_dict}")
+                    is_flagged_by_openai |= scores_dict is not None
+                outputs.append(output)
             is_any_success |= not passed
         num_success += is_any_success
         # print(num_success)
+
+        if args.openai_filter and is_flagged_by_openai:
+            outputs = filtered_outputs
 
         text = f"\n{'=' * 80}\n\n".join(outputs)
         text_file = str(log_file).replace(".jsonl", ".txt")
@@ -295,6 +322,11 @@ if __name__ == "__main__":
         "--regenerate-outputs",
         action="store_true",
         help="Run inference on target model against all suffixes.",
+    )
+    parser.add_argument(
+        "--openai_filter",
+        action="store_true",
+        help="Filter out outputs flagged by OpenAI.",
     )
     _args = parser.parse_args()
     main(_args)

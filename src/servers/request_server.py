@@ -1,46 +1,40 @@
-import json
 import logging
 import multiprocessing as mp
 import os
 import time
+from typing import Any
 
-import cohere
+import requests
 from tqdm import tqdm
 
 from src.servers.common import GLOBAL_PROCESS_LIST, kill_servers
 
 _BASE_SLEEP_TIME = 3
-EXCEPT_COHERE_ERRORS = (
-    cohere.BadRequestError,
-    cohere.TooManyRequestsError,
-    cohere.InternalServerError,
-    cohere.ServiceUnavailableError,
-    cohere.core.api_error.ApiError,
-    json.decoder.JSONDecodeError,
-    cohere.errors.internal_server_error.InternalServerError,
-    cohere.errors.too_many_requests_error.TooManyRequestsError,
-    cohere.errors.service_unavailable_error.ServiceUnavailableError,
+REQUEST_ERRORS = (
+    requests.exceptions.HTTPError,
+    requests.exceptions.ConnectionError,
+    requests.exceptions.Timeout,
+    requests.exceptions.RequestException,
+    requests.exceptions.JSONDecodeError,
 )
 
-Completions = list[cohere.Generation]
+Completions = list[dict[str, Any]]
 Queues = tuple[mp.Queue, mp.Queue]
 
 logger = logging.getLogger(__name__)
 
 
-def _cohere_chat_server(call_queue, leader=False):
-    client = cohere.Client()
-
+def _request_server(call_queue, leader=False):
     while True:
         task = call_queue.get(block=True)
         if task is None:
             return
 
-        compl_id, message, kwargs, dest_queue = task
-        result = call_cohere(client, message, **kwargs)
+        compl_id, message, url, headers, kwargs, dest_queue = task
+        result = send_request(message, url=url, headers=headers, **kwargs)
         if result == 0 and not leader:
             call_queue.put(task)
-            print("Reducing the number of Cohere threads due to Rate Limit")
+            print("Reducing the number of threads due to Rate Limit")
             return
         if result == 0 and leader:
             call_queue.put(task)
@@ -48,14 +42,24 @@ def _cohere_chat_server(call_queue, leader=False):
             dest_queue.put((compl_id, result))
 
 
-def call_cohere(client: cohere.Client, messages: str, **kwargs):
-    def loop(f, params):
+def send_request(
+    messages: str,
+    url: str = "https://api.together.xyz/v1/completions",
+    headers: dict[str, str] | None = None,
+    **kwargs,
+):
+    def loop(params):
         max_retries = 7
         retry = 0
         while retry < max_retries:
             try:
-                return f(params)
-            except EXCEPT_COHERE_ERRORS as e:
+                return requests.post(
+                    url,
+                    json=kwargs,
+                    headers=headers,
+                    timeout=_BASE_SLEEP_TIME * (1 + retry),
+                )
+            except REQUEST_ERRORS as e:
                 if retry == max_retries - 1:
                     print(f"Error after {retry} retries: {e}\n{params}")
                     if "This model does not support the 'logprobs'" in str(e):
@@ -72,7 +76,7 @@ def call_cohere(client: cohere.Client, messages: str, **kwargs):
 
     assert isinstance(messages, str), messages
     kwargs["prompt"] = messages
-    return loop(lambda x: client.generate(**x), kwargs)
+    return loop(kwargs)
 
 
 def init_servers(number_of_processes: int = 4):
@@ -89,7 +93,7 @@ def init_servers(number_of_processes: int = 4):
     call_queue = global_manager.Queue()
 
     for i in range(number_of_processes):
-        p = mp.Process(target=_cohere_chat_server, args=(call_queue, i == 0))
+        p = mp.Process(target=_request_server, args=(call_queue, i == 0))
         p.daemon = True
         p.start()
         GLOBAL_PROCESS_LIST.append(p)
@@ -103,6 +107,8 @@ def standalone_server(
     num_processes: int = os.cpu_count(),
     cleanup: bool = True,
     queues: Queues | None = None,
+    url: str = "https://api.together.xyz/v1/completions",
+    headers: dict[str, str] | None = None,
     **kwargs,
 ) -> Completions | tuple[Completions, Queues]:
     """Run a standalone server to process inputs and return responses.
@@ -127,16 +133,16 @@ def standalone_server(
     assert isinstance(inputs, list) and isinstance(
         inputs[0], (str, list)
     ), inputs
-    logger.debug("Calling Cohere API with following params: %s", kwargs)
+    logger.debug("Calling API with following params: %s", kwargs)
 
     for idx, inpt in enumerate(inputs):
-        queue.put((idx, inpt, kwargs, resp_queue))
+        queue.put((idx, inpt, url, headers, kwargs, resp_queue))
 
     responses = ["" for _ in inputs]
     for _ in tqdm(
         inputs,
         total=len(inputs),
-        desc="Querying Cohere",
+        desc="Querying API",
         disable=not display_progress,
     ):
         idx, resp = resp_queue.get(block=True)

@@ -9,6 +9,7 @@ from src.message import Message
 from src.models.base import BaseModel
 from src.models.cohere import CohereModel, CohereTokenizer
 from src.models.openai import OpenAIModel
+from src.models.togetherai import TogetherAIModel
 from src.utils.suffix import SuffixManager
 from src.utils.types import PrefixCache
 
@@ -22,10 +23,14 @@ def load_model_and_tokenizer(
     **kwargs,
 ) -> tuple[BaseModel, AutoTokenizer, SuffixManager]:
     """Load model, tokenizer, and suffix manager."""
-    if any(kw in model_name for kw in ("gpt", "davinci", "cohere")):
+    if any(
+        kw in model_name for kw in ("gpt", "davinci", "cohere", "togetherai")
+    ):
         template_name, model_path = model_name.split("@")
         if "cohere" in model_name:
             model_class = CohereModel
+        elif "togetherai" in model_name:
+            model_class = TogetherAIModel
         else:
             model_class = OpenAIModel
         wrapped_model = model_class(

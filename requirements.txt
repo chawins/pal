@@ -193,7 +193,7 @@ torch==2.0.1
 torchaudio==2.0.2
 torchvision==0.15.2
 tqdm==4.65.0
-transformers==4.34.1
+transformers==4.35.2
 triton==2.0.0
 typeguard==2.13.3
 typing_extensions==4.7.0

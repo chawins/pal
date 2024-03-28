@@ -1,20 +1,21 @@
 import copy
+import json
 import logging
-from typing import Literal
+import os
 
-import cohere
 import numpy as np
+import requests
 import torch
+import transformers
 
 from src.message import Message, Role
-from src.models.base import BaseModel, Encoded, LossOutput
+from src.models.base import BaseModel, LossOutput
 from src.models.model_input import ModelInputIds, ModelInputs
-from src.servers.cohere_server import (
-    EXCEPT_COHERE_ERRORS,
+from src.servers.request_server import (
+    REQUEST_ERRORS,
     Queues,
     standalone_server,
 )
-from src.utils.cohere_non_ascii import COHERE_NON_ASCII
 from src.utils.suffix import SuffixManager, build_prompt
 from src.utils.types import BatchTokenIds
 
@@ -22,16 +23,14 @@ logger = logging.getLogger(__name__)
 
 
 class Response:
-    def __init__(
-        self, raw_response: cohere.Generation | None, stream: bool = False
-    ) -> None:
+    def __init__(self, raw_response, stream: bool = False) -> None:
         self.response = raw_response
         self.stream = stream
         self.complete = False
 
         if self.stream:
             raise NotImplementedError(
-                "Streaming is not implemented for Cohere API!"
+                "Streaming is not implemented for TogetherAI API!"
             )
             # pylint: disable=unreachable
             self.response_iter = iter(self.response)
@@ -39,7 +38,7 @@ class Response:
             if raw_response is None:
                 self.response = ""
             else:
-                self.response = raw_response.generations[0].text
+                self.response = raw_response.json()["choices"][0]["text"]
 
     def __iter__(self):
         return self
@@ -55,7 +54,7 @@ class Response:
         try:
             chunk = next(self.response_iter)
             raise NotImplementedError(
-                "Streaming is not implemented for Cohere API!"
+                "Streaming is not implemented for TogetherAI API!"
             )
             delta = chunk.choices[0].delta  # pylint: disable=unreachable
             return delta.content
@@ -64,112 +63,8 @@ class Response:
             raise e
 
 
-class CohereTokenizer:
-    non_ascii = COHERE_NON_ASCII
-
-    def __init__(self, model_name: str):
-        self._co = cohere.Client()
-        # Assume command/command-light model
-        self._model_name = model_name
-        # 0: '<PAD>'
-        # 1: '<UNK>'
-        # 2: '<CLS>'
-        # 3: '<SEP>'
-        # 4: '<MASK_TOKEN>'
-        # 5: '<BOS_TOKEN>'
-        # 6: '<EOS_TOKEN>'
-        # 7: '<EOP_TOKEN>'
-        # Set interface to match HuggingFace
-        self.vocab_size = 75500
-        self.bos_token_id = 5
-        self.eos_token_id = 6
-        self.pad_token_id = 0
-        self.unk_token_id = 1
-        self.eot_token = "<EOP_TOKEN>"  # Cohere uses EOP token instead of EOT
-
-    def __len__(self):
-        return self.vocab_size
-
-    def __call__(
-        self,
-        text: str | list[str],
-        return_tensors: Literal["list", "pt", "np"] = "list",
-        **kwargs,
-    ):
-        _ = kwargs  # unused
-        if text is None:
-            return Encoded([])
-
-        def tokenize(t):
-            try:
-                ids = self._co.tokenize(text=t, model=self._model_name).tokens
-            except EXCEPT_COHERE_ERRORS as e:
-                logger.warning("Error found in cohere.tokenize: %s", str(e))
-                return []
-            return ids
-
-        if isinstance(text, list):
-            # Encode all special tokens as normal text
-            _ids = [tokenize(t) for t in text]
-            max_len = max(len(i) for i in _ids)
-            input_ids = np.zeros((len(_ids), max_len), dtype=np.int64)
-            input_ids += self.pad_token_id
-            for i, _id in enumerate(_ids):
-                input_ids[i, : len(_id)] = _id
-        else:
-            input_ids = tokenize(text)
-            input_ids = np.array(input_ids, dtype=np.int64)
-
-        if return_tensors == "pt":
-            input_ids = torch.from_numpy(input_ids)
-        elif return_tensors == "list":
-            input_ids = input_ids.tolist()
-        return Encoded(input_ids)
-
-    def _parse_ids(self, ids):
-        return ids
-
-    def _detokenize(self, tokens: list[int]) -> str:
-        try:
-            text = self._co.detokenize(
-                tokens=tokens, model=self._model_name
-            ).text
-        except EXCEPT_COHERE_ERRORS as e:
-            logger.warning("Error found in cohere.detokenize: %s", str(e))
-            return ""
-        return text
-
-    def decode(self, ids, **kwargs) -> str:
-        _ = kwargs  # unused
-        if isinstance(ids, torch.Tensor):
-            ids = ids.tolist()
-        if isinstance(ids, int):
-            ids = [ids]
-        assert isinstance(ids, list) and isinstance(
-            ids[0], int
-        ), f"ids must be list or int, got {type(ids)} {ids}"
-        decoded = self._detokenize(ids)
-        return decoded
-
-    def batch_decode(self, ids, **kwargs) -> list[str]:
-        _ = kwargs  # unused
-        if isinstance(ids, torch.Tensor):
-            ids = ids.tolist()
-        if isinstance(ids, int):
-            ids = [[ids]]
-        if isinstance(ids, list) and isinstance(ids[0], int):
-            ids = [ids]
-        assert (
-            isinstance(ids, list)
-            and isinstance(ids[0], list)
-            and isinstance(ids[0][0], int)
-        ), f"ids must be list of list of int, got {type(ids)} {ids}"
-        decoded_list = [self._detokenize(i) for i in ids]
-        return decoded_list
-
-
-class CohereModel(BaseModel):
-    """Model builder for OpenAI API models.
+class TogetherAIModel(BaseModel):
+    """Model builder for TogetherAI API models.
 
     Call with a list of `Message` objects to generate a response.
     """
@@ -193,9 +88,9 @@ class CohereModel(BaseModel):
         num_api_processes: int = 8,
         **kwargs,
     ) -> None:
-        logger.debug("Initializing CohereModel...")
+        logger.debug("Initializing TogetherAIModel...")
         _ = kwargs  # Unused
-        self.model = model
+        self.model = model.replace("togetherai:", "")
         self.temperature = temperature
         self.stream = stream
         self.top_p = top_p
@@ -205,20 +100,16 @@ class CohereModel(BaseModel):
         self.presence_penalty = presence_penalty
         self.logit_bias = logit_bias or {}
         self.template = template_name
-        self.client = cohere.Client()
 
         # kwargs for all OpenAI requests (not including logprobs, echo, and
         # logit_bias, max_tokens)
         self.request_kwargs = {
             "model": self.model,
             "temperature": self.temperature,
-            "p": self.top_p,
-            "stop_sequences": self.stop,
-            "frequency_penalty": self.frequency_penalty,
-            "presence_penalty": self.presence_penalty,
-            "return_likelihoods": "ALL",
-            "raw_prompting": True,
-            "seed": 0,  # Chat API is non-deterministic even with temperature 0
+            "top_p": self.top_p,
+            "stop": ["</s>"],
+            "logprobs": 1,
+            "echo": True,
         }
         self.server_kwargs = {
             "display_progress": logging.root.level == logging.DEBUG,
@@ -226,10 +117,20 @@ class CohereModel(BaseModel):
             "max_tokens": 0,
             **self.request_kwargs,
         }
+        api_key = os.environ["TOGETHERAI_API_KEY"]
+        self.headers = {
+            "accept": "application/json",
+            "content-type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        }
 
         self.device = "cpu"
         self.num_fixed_tokens = 0
-        self.tokenizer = CohereTokenizer(model)
+        self.tokenizer = transformers.AutoTokenizer.from_pretrained(
+            self.model, trust_remote_code=True, use_fast=False
+        )
+        if not self.tokenizer.pad_token:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
         self.suffix_manager = suffix_manager
         self.system_message = system_message
         self._messages = None
@@ -276,30 +177,53 @@ class CohereModel(BaseModel):
             else:
                 messages[1] = Message(Role.USER, f"{goal} {suffix}")
             prompts[i] = build_prompt(messages, template_name=self.template)
-        logger.debug("Cohere prompts[0]: %s", prompts[0])
+        logger.debug("TogetherAI prompts[0]: %s", prompts[0])
 
         responses, self._queues = standalone_server(
             prompts,
             queues=self._queues,
             cleanup=False,
+            url="https://api.together.xyz/v1/completions",
+            headers=self.headers,
             **self.server_kwargs,
         )
         losses = np.zeros(len(responses)) + np.infty
         outputs = [""] * len(responses)
         for i, response in enumerate(responses):
-            outputs[i] = response.generations[0].text
-            token_likelihoods = response.generations[0].token_likelihoods
-            is_target = False
+            if response is None:
+                continue
+            try:
+                response_json = response.json()
+            except json.decoder.JSONDecodeError as e:
+                logger.warning("Error when parsing response into json: %s", e)
+                continue
+            outputs[i] = response_json["choices"][0]["text"]
+            tokens: list[str] = response_json["prompt"][0]["logprobs"]["tokens"]
+            token_logprobs = response_json["prompt"][0]["logprobs"][
+                "token_logprobs"
+            ]
+
+            # Find last "INST", "]"
+            start_idx = None
+            for j in range(len(tokens) - 1, 0, -1):
+                if tokens[j] == "INST":
+                    start_idx = j
+                    break
+            start_idx += 2
+
             loss = 0.0
-            for single_gen_token in token_likelihoods:
-                if single_gen_token.token == "<EOP_TOKEN>":
-                    is_target = True
-                    continue
-                if is_target:
-                    loss -= single_gen_token.likelihood
+            will_break = False
+            for j in range(start_idx, len(tokens)):
+                if will_break:
+                    break
+                if target.strip().endswith(tokens[j].strip()):
+                    will_break = True
+                loss -= token_logprobs[j]
             losses[i] = loss
-            self._num_input_tokens += response.meta.billed_units.input_tokens
-            self._num_output_tokens += response.meta.billed_units.output_tokens
+            self._num_input_tokens += response_json["usage"]["prompt_tokens"]
+            self._num_output_tokens += response_json["usage"][
+                "completion_tokens"
+            ]
 
         self._num_queries += len(prompts)
         self._num_tokens += self._num_input_tokens + self._num_output_tokens
@@ -388,14 +312,20 @@ class CohereModel(BaseModel):
     ) -> Response:
         _ = logit_bias, echo, echo_len, api_key, logprobs, prompt
         prompt = build_prompt(messages, template_name=self.template)
-        logger.debug("Cohere prompt: %s", prompt)
+        logger.debug("TogetherAI prompt: %s", prompt)
         try:
-            response = self.client.generate(
-                prompt=prompt,
-                max_tokens=self.max_tokens,
-                **self.request_kwargs,
+            response = requests.post(
+                "https://api.together.xyz/v1/completions",
+                json={
+                    "max_tokens": self.max_tokens,
+                    "prompt": prompt,
+                    **self.request_kwargs,
+                },
+                headers=self.headers,
+                timeout=30,
             )
-        except EXCEPT_COHERE_ERRORS as e:
-            logger.warning("Error found in cohere.generate: %s", str(e))
-            response = None
-        return Response(response)
+            response = Response(response)
+        except REQUEST_ERRORS as e:
+            logger.warning("Error found in requests.post: %s", str(e))
+            response = Response(None)
+        return response
