@@ -31,6 +31,10 @@ def get_config():
     # Loss function for proxy model only (default: <same as config.loss_func>)
     config.proxy_loss_func = config_dict.FieldReference(None, field_type=str)
 
+    # Ablation studies
+    config.use_rand_grad = False
+    config.no_proxy_filter = False
+
     # ========================== Fine-tuning params ========================== #
     # Whether to fine-tune the proxy model. If False, all the following params
     # are ignored.

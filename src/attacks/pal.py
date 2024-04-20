@@ -18,7 +18,12 @@ from src.message import Message
 from src.models.base import NaNLossError
 from src.models.ensemble import EnsembleModel
 from src.models.huggingface import FineTuneConfig, TransformersModel
-from src.models.model_input import ModelInputIds, ModelInputs, SuffixIds
+from src.models.model_input import (
+    LengthMismatchError,
+    ModelInputIds,
+    ModelInputs,
+    SuffixIds,
+)
 from src.models.mp_huggingface import MpTransformersModel
 from src.models.openai import GptTokenizer
 from src.models.utils import get_nonascii_toks
@@ -79,7 +84,7 @@ class AttackVer(Enum):
 
 
 class PalAttack(GCGAttack):
-    """Better Proxy Attack."""
+    """PAL Attack."""
 
     name: str = "pal"
 
@@ -147,6 +152,14 @@ class PalAttack(GCGAttack):
         # If True, log target loss in addition to proxy loss (does not count
         # towards best_loss, success, or number of queries).
         self._log_target_loss: bool = config.log_target_loss
+
+        # Ablation studies
+        # Use normal random noise as proxy grad to simulate random candidate
+        # token selection.
+        self._rand_grad: bool = config.use_rand_grad
+        # Remove proxy filtering step
+        self._no_proxy_filter: bool = config.no_proxy_filter
+
         super().__init__(config, *args, lazy_init=lazy_init, **kwargs)
 
         if lazy_init:
@@ -270,6 +283,11 @@ class PalAttack(GCGAttack):
                 atk_tokens.append("past")
             if self._proxy_tune_temperature != 1.0:
                 atk_tokens.append(f"ptt{self._proxy_tune_temperature}")
+
+        if self._rand_grad:
+            atk_tokens.append("rg")
+        if self._no_proxy_filter:
+            atk_tokens.append("np")
         return atk_tokens
 
     def _save_best(self, current_loss, current_suffix):
@@ -369,8 +387,12 @@ class PalAttack(GCGAttack):
     def _update_suffix(
         self, model_input: ModelInputIds, num_valid: int
     ) -> tuple[str, float]:
-        proxy_loss = self._compute_loss_proxy(model_input, num_valid)
-        # print("PROXY_LOSS:", proxy_loss[:num_valid])
+        if self._no_proxy_filter:
+            # Remove proxy filter step = set proxy loss to random number
+            proxy_loss = torch.rand(num_valid, device=self._device)
+        else:
+            proxy_loss = self._compute_loss_proxy(model_input, num_valid)
+        self._cur_num_proxy_steps += 1
         suffixes = to_string(self._tokenizer, model_input.suffix_ids)
 
         # Update the k lowest proxy losses
@@ -468,7 +490,6 @@ class PalAttack(GCGAttack):
         ).losses
         proxy_loss[num_valid:] = _BIG_NUM
         self._proxy_loss = proxy_loss.min().item()
-        self._cur_num_proxy_steps += 1
         return proxy_loss
 
     @torch.no_grad()
@@ -499,6 +520,7 @@ class PalAttack(GCGAttack):
 
         eval_input = gen_eval_input(adv_suffix)
         optim_slice = eval_input.optim_slice
+        prev_adv_suffix = adv_suffix
 
         eval_input.suffix_ids = eval_input.suffix_ids.unsqueeze(0)
         proxy_loss = self._compute_loss_proxy(eval_input, 1)
@@ -532,14 +554,32 @@ class PalAttack(GCGAttack):
             self._step = i
             self._on_step_begin()
 
-            eval_input = gen_eval_input(adv_suffix)
+            try:
+                eval_input = gen_eval_input(adv_suffix)
+                prev_adv_suffix = adv_suffix
+            except LengthMismatchError:
+                logger.warning(
+                    "LengthMismatchError occurs on new adv_suffix. Reverting "
+                    "to the previous adv_suffix..."
+                )
+                adv_suffix = prev_adv_suffix
+                eval_input = gen_eval_input(prev_adv_suffix)
             dynamic_input_ids = eval_input.dynamic_input_ids
             optim_slice = eval_input.optim_slice
             optim_ids = dynamic_input_ids[optim_slice]
 
             # Compute grad as needed (None if no-grad attack)
-            # pylint: disable=assignment-from-none
-            token_grads = self._compute_grad(eval_input)
+            if self._rand_grad:
+                token_grads = torch.randn(
+                    (
+                        optim_slice.stop - optim_slice.start,
+                        len(self._tokenizer),
+                    ),
+                    device=self._device,
+                )
+            else:
+                # pylint: disable=assignment-from-none
+                token_grads = self._compute_grad(eval_input)
 
             # Sample new candidate tokens
             adv_suffix_ids = self._sample_updates(
