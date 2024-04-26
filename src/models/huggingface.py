@@ -660,7 +660,6 @@ class TransformersModel(BaseModel):
         )
 
         for i in range(max_target_len):
-            best_target_len = i + 1
             target_tok_id = target_ids[i]
             target_tok = self.tokenizer.decode(
                 target_tok_id, skip_special_tokens=True
@@ -699,31 +698,43 @@ class TransformersModel(BaseModel):
                 num_samples - num_top1 - num_top5,
             )
 
-            if num_top1 == 0:
-                if is_top5.any():
-                    to_update = is_top5
-                else:
-                    # No prompt with target_tok in top-5
-                    # Query for the second time and update loss for all of them
-                    num_queries += cur_is_success.sum().item()
-                    to_update = cur_is_success
-            else:
-                # There's at least one prompt with target_tok in top-1
-                to_update = is_top1
-
             # Update loss
-            batch_target = batch_zeros + target_tok_id
-            if "ce" in loss_func:
-                loss = F.cross_entropy(
-                    logits[:, i], batch_target.squeeze(1), reduction="none"
-                )
+            if is_top5.any():
+                # If target_tok is in top-5, we can directly access logprob of
+                # target_tok so we compute loss as usual
+                best_target_len = i + 1
+                if num_top1 == 0:
+                    loss_idx_to_update = is_top5
+                else:
+                    # There's at least one prompt with target_tok in top-1
+                    loss_idx_to_update = is_top1
+                batch_target = batch_zeros + target_tok_id
+                if "ce" in loss_func:
+                    loss = F.cross_entropy(
+                        logits[:, i], batch_target.squeeze(1), reduction="none"
+                    )
+                else:
+                    loss = _cw_loss(
+                        logits[:, i : i + 1], batch_target, cw_margin=cw_margin
+                    )
+                new_losses[loss_idx_to_update] += loss[loss_idx_to_update]
             else:
-                loss = _cw_loss(
-                    logits[:, i : i + 1], batch_target, cw_margin=cw_margin
-                )
-            new_losses[to_update] += loss[to_update]
+                # No prompt with target_tok in top-5: estimate target_tok prob
+                best_target_len = i
+                loss_idx_to_update = cur_is_success
+                # probs: [batch_size, vocab_size]
+                probs = logits[:, i].softmax(dim=-1)[loss_idx_to_update]
+                top5_probs = probs.topk(5, dim=-1).values
+                est_target_probs = 1 - top5_probs.sum(-1)
+                if "ce" in loss_func:
+                    new_losses[loss_idx_to_update] = -est_target_probs.log()
+                else:
+                    top5_lprobs = top5_probs.log()
+                    new_losses[loss_idx_to_update] = (
+                        top5_lprobs[:, 0] - est_target_probs.log()
+                    ).clamp_min(-cw_margin)
 
-            cur_is_success = to_update
+            cur_is_success = loss_idx_to_update
             if num_top1 == 0:
                 break
 

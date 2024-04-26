@@ -56,9 +56,9 @@ def load_model_and_tokenizer(
 
 def _load_huggingface_model_and_tokenizer(
     model_name: str,
-    tokenizer_path=None,
-    device="cuda:0",
-    load_in_8bit=None,
+    tokenizer_path: str | None = None,
+    device: str = "cuda:0",
+    load_in_8bit: bool | None = None,
     use_system_instructions: bool = False,
     system_message: str | None = None,
     max_tokens: int = 512,
@@ -79,6 +79,8 @@ def _load_huggingface_model_and_tokenizer(
     if not load_in_8bit or load_in_8bit is None:
         model = model.to(device, non_blocking=True)
     model = model.eval()
+    for param in model.parameters():
+        param.requires_grad = False
 
     tokenizer_path = tokenizer_path or model_path
 
@@ -135,7 +137,7 @@ def get_nonascii_toks(tokenizer, device="cpu") -> torch.Tensor:
     for i in range(3, tokenizer.vocab_size):
         try:
             tok = tokenizer.decode([i])
-        except:  # noqa: E722, pylint: bare-except
+        except:  # noqa: E722, pylint: disable=bare-except
             # GPT tokenizer throws an error for some tokens
             # pyo3_runtime.PanicException: no entry found for key
             non_ascii_toks.append(i)
