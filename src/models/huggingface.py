@@ -14,7 +14,7 @@ import torch_optimizer
 import transformers
 from llama_recipes.policies import AnyPrecisionAdamW
 from llama_recipes.utils.config_utils import generate_peft_config
-from peft import get_peft_model, prepare_model_for_int8_training
+from peft import get_peft_model, prepare_model_for_kbit_training
 from torch.optim.lr_scheduler import StepLR
 
 from src.message import Message
@@ -207,7 +207,7 @@ class TransformersModel(BaseModel):
 
             if quant:
                 logger.info("Preparing proxy model for int8 training...")
-                self.model = prepare_model_for_int8_training(self.model)
+                self.model = prepare_model_for_kbit_training(self.model)
                 # Grad from quantized models is somehow float32 so we also need
                 # embed weights to be float32 for compute_grad().
                 self.embed_weights = self.embed_weights.float()
@@ -345,15 +345,17 @@ class TransformersModel(BaseModel):
         )
         return [response]
 
+    @torch.no_grad()
     def _get_batch_prefix_cache(self, batch_size: int) -> PrefixCache:
         if self.prefix_cache is None:
-            raise RuntimeError("Prefix cache has not been set!")
+            return None
         if batch_size not in self._batch_prefix_cache:
             self._batch_prefix_cache[batch_size] = batchify_kv_cache(
                 self.prefix_cache, batch_size
             )
         return self._batch_prefix_cache[batch_size]
 
+    @torch.no_grad()
     def set_prefix_cache(self, messages: list[Message]) -> None:
         self.prefix_cache, self.num_fixed_tokens = get_prefix_cache(
             self.suffix_manager, self.model, self.tokenizer, messages
@@ -445,6 +447,7 @@ class TransformersModel(BaseModel):
         max_target_len: int = 32,
         loss_func: str = "ce-all",
         cw_margin: float = 1e-3,
+        use_cache: bool = False,
         **kwargs,
     ) -> LossOutput:
         _ = kwargs  # Unused
@@ -504,6 +507,7 @@ class TransformersModel(BaseModel):
                 temperature=temperature,
                 loss_func=loss_func,
                 cw_margin=cw_margin,
+                use_cache=use_cache,
             )
             loss_list.append(loss)
             logits_list.append(logits)
@@ -525,6 +529,7 @@ class TransformersModel(BaseModel):
         max_target_len: int | None = None,
         loss_func: str = "ce-all",
         cw_margin: float = 1e-3,
+        use_cache: bool = False,
         **kwargs,
     ) -> LossOutput:
         """Compute loss given multiple suffixes.
@@ -595,6 +600,7 @@ class TransformersModel(BaseModel):
                 temperature=temperature,
                 loss_func=loss_func,
                 cw_margin=cw_margin,
+                use_cache=use_cache,
             )
             loss_list.append(loss)
             logits_list.append(logits)
@@ -746,6 +752,7 @@ class TransformersModel(BaseModel):
             losses=new_losses, num_queries=num_queries, texts=output_strs
         )
 
+    @torch.no_grad()
     def _compute_loss(
         self,
         batch_input_ids: BatchTokenIds,
@@ -755,6 +762,7 @@ class TransformersModel(BaseModel):
         temperature: float = 1.0,
         loss_func: str = "ce-all",
         cw_margin: float = 1e-3,
+        use_cache: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         num_samples = num_samples or len(batch_input_ids)
         input_embeds = self.embed_layer(batch_input_ids)
@@ -763,6 +771,7 @@ class TransformersModel(BaseModel):
         logits = self.model(
             inputs_embeds=input_embeds,
             past_key_values=self._get_batch_prefix_cache(len(batch_input_ids)),
+            use_cache=use_cache,
         ).logits[:num_samples]
 
         # loss_logits: [batch_size, loss_len, vocab_size]
@@ -834,6 +843,7 @@ class TransformersModel(BaseModel):
             logits = self.model(
                 inputs_embeds=input_embeds,
                 past_key_values=self._get_batch_prefix_cache(len(input_embeds)),
+                use_cache=False,
             ).logits
             # Compute loss and gradients
             loss_logits = logits[:, loss_slice].squeeze(0)

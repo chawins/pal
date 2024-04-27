@@ -9,6 +9,7 @@ python -u main.py \
     --config.batch_size=512 \
     --config.num_steps=30 \
     --config.log_freq=1 \
+    --config.fixed_params=False \
     -- \
     --scenario "Toxicity" --behaviors 0 --system_message "llama_default" \
     --model llama-2@~/data/models/Llama-2-7b-chat-hf --verbose

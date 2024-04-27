@@ -1,9 +1,11 @@
 import logging
 import os
+from typing import Any
 
 import fastchat
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers.cache_utils import Cache, DynamicCache
 
 from src.message import Message
 from src.models.base import BaseModel
@@ -14,6 +16,25 @@ from src.utils.suffix import SuffixManager
 from src.utils.types import PrefixCache
 
 logger = logging.getLogger(__name__)
+
+
+class CustomCache(DynamicCache):
+    def __init__(self) -> None:
+        super().__init__()
+        self.static = False
+
+    def update(
+        self,
+        key_states: torch.Tensor,
+        value_states: torch.Tensor,
+        layer_idx: int,
+        cache_kwargs: torch.Dict[str, Any] | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if not self.static:
+            return super().update(
+                key_states, value_states, layer_idx, cache_kwargs=cache_kwargs
+            )
+        return self.key_cache[layer_idx], self.value_cache[layer_idx]
 
 
 def load_model_and_tokenizer(
@@ -113,13 +134,17 @@ def _load_huggingface_model_and_tokenizer(
     return wrapped_model, tokenizer, suffix_manager
 
 
-def batchify_kv_cache(prefix_cache, batch_size):
+def batchify_kv_cache(
+    prefix_cache: CustomCache, batch_size: int
+) -> CustomCache:
     batch_prefix_cache = []
     for k, v in prefix_cache:
         batch_prefix_cache.append(
             (k.repeat(batch_size, 1, 1, 1), v.repeat(batch_size, 1, 1, 1))
         )
-    return tuple(batch_prefix_cache)
+    cache = CustomCache.from_legacy_cache(batch_prefix_cache)
+    cache.static = True
+    return cache
 
 
 def get_nonascii_toks(tokenizer, device="cpu") -> torch.Tensor:
@@ -164,7 +189,7 @@ def get_prefix_cache(
     model,
     tokenizer,
     messages: list[Message],
-) -> PrefixCache:
+) -> tuple[PrefixCache, int]:
     static_input_ids = suffix_manager.get_input_ids(messages, static_only=True)
     static_input_str = tokenizer.decode(
         static_input_ids, skip_special_tokens=True
@@ -179,4 +204,7 @@ def get_prefix_cache(
         input_embeds = embed_layer(static_input_ids.to(device)).unsqueeze(0)
         outputs = model(inputs_embeds=input_embeds, use_cache=True)
         prefix_cache = outputs.past_key_values
+        if not isinstance(prefix_cache, Cache):
+            prefix_cache = CustomCache.from_legacy_cache(prefix_cache)
+            prefix_cache.static = True
     return prefix_cache, num_static_tokens

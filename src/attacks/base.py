@@ -192,9 +192,8 @@ class BaseAttack:
             num_fixed_tokens=0,
             max_target_len=self._seq_len,
         )
-        if not self._fixed_params:
-            return
-        self._model.set_prefix_cache(messages)
+        if self._fixed_params:
+            self._model.set_prefix_cache(messages)
 
     def _on_step_begin(self, *args, **kwargs):
         """Exectued at the beginning of each step."""
@@ -239,6 +238,7 @@ class BaseAttack:
             max_target_len=self._cur_seq_len,
             loss_func=self._loss_func,
             cw_margin=self._cw_margin,
+            # use_cache=True,
         )
         self._num_queries += output.num_queries
         return output.losses
@@ -454,6 +454,7 @@ class BaseAttack:
             loss_func=self._loss_func,
             cw_margin=self._cw_margin,
             max_target_len=self._cur_seq_len,
+            # use_cache=True,
         ).losses
         self._save_best(loss.min().item(), adv_suffix)
 

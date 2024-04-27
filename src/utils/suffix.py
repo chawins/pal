@@ -18,6 +18,7 @@ class SuffixManager:
 
     valid_templates = (
         "llama-2",
+        "llama-3",
         "vicuna_v1.1",
         "mistral",
         "chatgpt",
