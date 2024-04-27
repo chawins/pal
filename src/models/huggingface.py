@@ -727,10 +727,10 @@ class TransformersModel(BaseModel):
                 top5_probs = probs.topk(5, dim=-1).values
                 est_target_probs = 1 - top5_probs.sum(-1)
                 if "ce" in loss_func:
-                    new_losses[loss_idx_to_update] = -est_target_probs.log()
+                    new_losses[loss_idx_to_update] -= est_target_probs.log()
                 else:
                     top5_lprobs = top5_probs.log()
-                    new_losses[loss_idx_to_update] = (
+                    new_losses[loss_idx_to_update] += (
                         top5_lprobs[:, 0] - est_target_probs.log()
                     ).clamp_min(-cw_margin)
 
