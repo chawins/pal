@@ -158,7 +158,7 @@ def main(args):
         wrapped_model = models_utils.load_model_and_tokenizer(
             f"{template}@{model_path}",
             low_cpu_mem_usage=True,
-            use_cache=True,  # FIXME
+            use_cache=True,
             device=device,
             system_message=args.system_message,
             use_system_instructions=args.use_system_instructions,

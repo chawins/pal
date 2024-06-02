@@ -843,7 +843,6 @@ class TransformersModel(BaseModel):
             logits = self.model(
                 inputs_embeds=input_embeds,
                 past_key_values=self._get_batch_prefix_cache(len(input_embeds)),
-                use_cache=True,
             ).logits
             # Compute loss and gradients
             loss_logits = logits[:, loss_slice].squeeze(0)
