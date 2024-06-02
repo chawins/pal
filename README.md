@@ -20,8 +20,7 @@ So you can install all the required packages there and then install the addition
 ```bash
 pip install python-dotenv anthropic tenacity google-generativeai num2words bitsandbytes tiktoken sentencepiece torch_optimizer absl-py ml_collections jaxtyping cohere openai
 pip install --extra-index-url https://download.pytorch.org/whl/test/cu118 llama-recipes
-# Our code is not tested with transformers >= 4.36
-pip install transformers==4.35.2 fschat==0.2.34
+pip install transformers fschat
 ```
 
 ## Example
