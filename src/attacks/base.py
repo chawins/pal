@@ -192,9 +192,8 @@ class BaseAttack:
             num_fixed_tokens=0,
             max_target_len=self._seq_len,
         )
-        if not self._fixed_params:
-            return
-        self._model.set_prefix_cache(messages)
+        if self._fixed_params:
+            self._model.set_prefix_cache(messages)
 
     def _on_step_begin(self, *args, **kwargs):
         """Exectued at the beginning of each step."""

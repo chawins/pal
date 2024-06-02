@@ -10,13 +10,14 @@ from pathlib import Path
 import torch
 import yaml
 from openai import OpenAI
+from tqdm import tqdm
+
 from rules import scenarios
 from src import models
 from src.message import Message, Role
 from src.models import SYSTEM_MESSAGES
 from src.models import utils as models_utils
 from src.models.base import BaseModel
-from tqdm import tqdm
 
 CLIENT = OpenAI()
 
@@ -140,7 +141,7 @@ def main(args):
 
     wrapped_model = None
     if args.regenerate_outputs:
-        if "Llama" in model_name:
+        if "Llama-2" in model_name:
             template = "llama-2"
             args.system_message = "llama_default"
         elif "vicuna" in model_name:

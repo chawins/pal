@@ -25,7 +25,7 @@ from src.models.model_input import (
     SuffixIds,
 )
 from src.models.mp_huggingface import MpTransformersModel
-from src.models.openai import GptTokenizer
+from src.models.tokenizer import GptTokenizer
 from src.models.utils import get_nonascii_toks
 from src.utils.suffix import SuffixManager
 
@@ -711,7 +711,10 @@ def _naming_hash(obj: str, length: int = 4) -> str:
 
 
 def _init_proxy_model(
-    model_name: str, use_system_instructions: bool = False, **kwargs
+    model_name: str,
+    use_system_instructions: bool = False,
+    ft_config: FineTuneConfig | None = None,
+    **kwargs,
 ) -> TransformersModel:
     """Initialize proxy model."""
     logger.info("Loading proxy model %s...", model_name)
@@ -726,6 +729,10 @@ def _init_proxy_model(
         suffix_manager=None,
         **kwargs,
     )
+    if ft_config is None:
+        for param in proxy_model.model.parameters():
+            param.requires_grad = False
+
     # Creating suffix manager
     suffix_manager = SuffixManager(
         tokenizer=proxy_model.tokenizer,

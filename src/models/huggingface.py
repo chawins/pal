@@ -14,13 +14,14 @@ import torch_optimizer
 import transformers
 from llama_recipes.policies import AnyPrecisionAdamW
 from llama_recipes.utils.config_utils import generate_peft_config
-from peft import get_peft_model, prepare_model_for_int8_training
+from peft import get_peft_model, prepare_model_for_kbit_training
 from torch.optim.lr_scheduler import StepLR
 
 from src.message import Message
 from src.models.base import BaseModel, LossOutput, NaNLossError
 from src.models.llama2_train_config import train_config as TRAIN_CONFIG
 from src.models.model_input import ModelInputIds, ModelInputs
+from src.models.tokenizer import Llama3Tokenizer
 from src.models.utils import batchify_kv_cache, get_prefix_cache
 from src.utils.suffix import SuffixManager, build_prompt
 from src.utils.types import BatchTokenIds, PrefixCache
@@ -142,10 +143,9 @@ class TransformersModel(BaseModel):
                 self.checkpoint_path,
                 torch_dtype=model_dtype,
                 low_cpu_mem_usage=False,
-                use_cache=False,
+                use_cache=True,
                 load_in_8bit=True if quant else None,
                 device_map="auto" if quant else None,
-                # device_map="auto",  # EDIT
             )
             if not quant:
                 self.model.to(self.device)
@@ -154,9 +154,15 @@ class TransformersModel(BaseModel):
                     "4-bit and 8-bit bitsandbytes model is assigned a device "
                     "automatically. It does not support multi-GPU."
                 )
-            self.tokenizer = transformers.AutoTokenizer.from_pretrained(
-                self.checkpoint_path
-            )
+            if "Meta-Llama-3" in self.checkpoint_path:
+                # Llama-3's tokenizer on HuggingFace is not behaving correctly.
+                # Encode and then decode "! ! !" removes all space in
+                # transformers=4.42.
+                self.tokenizer = Llama3Tokenizer()
+            else:
+                self.tokenizer = transformers.AutoTokenizer.from_pretrained(
+                    self.checkpoint_path
+                )
             if not self.tokenizer.pad_token:
                 self.tokenizer.pad_token = self.tokenizer.eos_token
 
@@ -207,7 +213,7 @@ class TransformersModel(BaseModel):
 
             if quant:
                 logger.info("Preparing proxy model for int8 training...")
-                self.model = prepare_model_for_int8_training(self.model)
+                self.model = prepare_model_for_kbit_training(self.model)
                 # Grad from quantized models is somehow float32 so we also need
                 # embed weights to be float32 for compute_grad().
                 self.embed_weights = self.embed_weights.float()
@@ -345,15 +351,17 @@ class TransformersModel(BaseModel):
         )
         return [response]
 
+    @torch.no_grad()
     def _get_batch_prefix_cache(self, batch_size: int) -> PrefixCache:
         if self.prefix_cache is None:
-            raise RuntimeError("Prefix cache has not been set!")
+            return None
         if batch_size not in self._batch_prefix_cache:
             self._batch_prefix_cache[batch_size] = batchify_kv_cache(
                 self.prefix_cache, batch_size
             )
         return self._batch_prefix_cache[batch_size]
 
+    @torch.no_grad()
     def set_prefix_cache(self, messages: list[Message]) -> None:
         self.prefix_cache, self.num_fixed_tokens = get_prefix_cache(
             self.suffix_manager, self.model, self.tokenizer, messages
@@ -660,7 +668,6 @@ class TransformersModel(BaseModel):
         )
 
         for i in range(max_target_len):
-            best_target_len = i + 1
             target_tok_id = target_ids[i]
             target_tok = self.tokenizer.decode(
                 target_tok_id, skip_special_tokens=True
@@ -699,31 +706,43 @@ class TransformersModel(BaseModel):
                 num_samples - num_top1 - num_top5,
             )
 
-            if num_top1 == 0:
-                if is_top5.any():
-                    to_update = is_top5
-                else:
-                    # No prompt with target_tok in top-5
-                    # Query for the second time and update loss for all of them
-                    num_queries += cur_is_success.sum().item()
-                    to_update = cur_is_success
-            else:
-                # There's at least one prompt with target_tok in top-1
-                to_update = is_top1
-
             # Update loss
-            batch_target = batch_zeros + target_tok_id
-            if "ce" in loss_func:
-                loss = F.cross_entropy(
-                    logits[:, i], batch_target.squeeze(1), reduction="none"
-                )
+            if is_top5.any():
+                # If target_tok is in top-5, we can directly access logprob of
+                # target_tok so we compute loss as usual
+                best_target_len = i + 1
+                if num_top1 == 0:
+                    loss_idx_to_update = is_top5
+                else:
+                    # There's at least one prompt with target_tok in top-1
+                    loss_idx_to_update = is_top1
+                batch_target = batch_zeros + target_tok_id
+                if "ce" in loss_func:
+                    loss = F.cross_entropy(
+                        logits[:, i], batch_target.squeeze(1), reduction="none"
+                    )
+                else:
+                    loss = _cw_loss(
+                        logits[:, i : i + 1], batch_target, cw_margin=cw_margin
+                    )
+                new_losses[loss_idx_to_update] += loss[loss_idx_to_update]
             else:
-                loss = _cw_loss(
-                    logits[:, i : i + 1], batch_target, cw_margin=cw_margin
-                )
-            new_losses[to_update] += loss[to_update]
+                # No prompt with target_tok in top-5: estimate target_tok prob
+                best_target_len = i
+                loss_idx_to_update = cur_is_success
+                # probs: [batch_size, vocab_size]
+                probs = logits[:, i].softmax(dim=-1)[loss_idx_to_update]
+                top5_probs = probs.topk(5, dim=-1).values
+                est_target_probs = 1 - top5_probs.sum(-1)
+                if "ce" in loss_func:
+                    new_losses[loss_idx_to_update] = -est_target_probs.log()
+                else:
+                    top5_lprobs = top5_probs.log()
+                    new_losses[loss_idx_to_update] = (
+                        top5_lprobs[:, 0] - est_target_probs.log()
+                    ).clamp_min(-cw_margin)
 
-            cur_is_success = to_update
+            cur_is_success = loss_idx_to_update
             if num_top1 == 0:
                 break
 
@@ -735,6 +754,7 @@ class TransformersModel(BaseModel):
             losses=new_losses, num_queries=num_queries, texts=output_strs
         )
 
+    @torch.no_grad()
     def _compute_loss(
         self,
         batch_input_ids: BatchTokenIds,

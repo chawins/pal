@@ -10,6 +10,7 @@ from src.models.base import BaseModel
 from src.models.cohere import CohereModel, CohereTokenizer
 from src.models.openai import OpenAIModel
 from src.models.togetherai import TogetherAIModel
+from src.models.tokenizer import Llama3Tokenizer
 from src.utils.suffix import SuffixManager
 from src.utils.types import PrefixCache
 
@@ -56,9 +57,9 @@ def load_model_and_tokenizer(
 
 def _load_huggingface_model_and_tokenizer(
     model_name: str,
-    tokenizer_path=None,
-    device="cuda:0",
-    load_in_8bit=None,
+    tokenizer_path: str | None = None,
+    device: str = "cuda:0",
+    load_in_8bit: bool | None = None,
     use_system_instructions: bool = False,
     system_message: str | None = None,
     max_tokens: int = 512,
@@ -79,13 +80,19 @@ def _load_huggingface_model_and_tokenizer(
     if not load_in_8bit or load_in_8bit is None:
         model = model.to(device, non_blocking=True)
     model = model.eval()
+    for param in model.parameters():
+        param.requires_grad = False
 
     tokenizer_path = tokenizer_path or model_path
-
-    tokenizer = AutoTokenizer.from_pretrained(
-        tokenizer_path, trust_remote_code=True, use_fast=False
-    )
-
+    if "Meta-Llama-3" in tokenizer_path:
+        # Llama-3's tokenizer on HuggingFace is not behaving correctly.
+        # Encode and then decode "! ! !" removes all space in
+        # transformers=4.42.
+        tokenizer = Llama3Tokenizer()
+    else:
+        tokenizer = AutoTokenizer.from_pretrained(
+            tokenizer_path, trust_remote_code=True, use_fast=False
+        )
     if not tokenizer.pad_token:
         tokenizer.pad_token = tokenizer.eos_token
 
@@ -111,13 +118,13 @@ def _load_huggingface_model_and_tokenizer(
     return wrapped_model, tokenizer, suffix_manager
 
 
-def batchify_kv_cache(prefix_cache, batch_size):
+def batchify_kv_cache(prefix_cache, batch_size: int):
     batch_prefix_cache = []
     for k, v in prefix_cache:
         batch_prefix_cache.append(
             (k.repeat(batch_size, 1, 1, 1), v.repeat(batch_size, 1, 1, 1))
         )
-    return tuple(batch_prefix_cache)
+    return batch_prefix_cache
 
 
 def get_nonascii_toks(tokenizer, device="cpu") -> torch.Tensor:
@@ -135,7 +142,7 @@ def get_nonascii_toks(tokenizer, device="cpu") -> torch.Tensor:
     for i in range(3, tokenizer.vocab_size):
         try:
             tok = tokenizer.decode([i])
-        except:  # noqa: E722, pylint: bare-except
+        except:  # noqa: E722, pylint: disable=bare-except
             # GPT tokenizer throws an error for some tokens
             # pyo3_runtime.PanicException: no entry found for key
             non_ascii_toks.append(i)
@@ -151,6 +158,8 @@ def get_nonascii_toks(tokenizer, device="cpu") -> torch.Tensor:
         non_ascii_toks.append(tokenizer.pad_token_id)
     if tokenizer.unk_token_id is not None:
         non_ascii_toks.append(tokenizer.unk_token_id)
+    if isinstance(tokenizer, Llama3Tokenizer):
+        non_ascii_toks.extend(list(tokenizer.special_tokens.values()))
     non_ascii_toks = list(set(non_ascii_toks))
 
     logger.debug("Finished getting non-ascii tokens.")
@@ -162,7 +171,7 @@ def get_prefix_cache(
     model,
     tokenizer,
     messages: list[Message],
-) -> PrefixCache:
+) -> tuple[PrefixCache, int]:
     static_input_ids = suffix_manager.get_input_ids(messages, static_only=True)
     static_input_str = tokenizer.decode(
         static_input_ids, skip_special_tokens=True

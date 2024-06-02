@@ -17,8 +17,9 @@ from openai.types.chat.chat_completion_token_logprob import TopLogprob
 from tenacity import retry, retry_if_not_exception_type, wait_random_exponential
 
 from src.message import Message, Role
-from src.models.base import BaseModel, Encoded, LossOutput
+from src.models.base import BaseModel, LossOutput
 from src.models.model_input import ModelInputIds, ModelInputs
+from src.models.tokenizer import GptTokenizer
 from src.servers.openai_server import Queues, standalone_server
 from src.utils.suffix import SuffixManager, build_prompt
 from src.utils.types import BatchTokenIds, TokenIds
@@ -45,82 +46,6 @@ COMPLETION_MODELS = [
 ]
 
 logger = logging.getLogger(__name__)
-
-
-class GptTokenizer:
-    def __init__(self, encoding: tiktoken.Encoding):
-        # Get the tokeniser corresponding to a specific model in the OpenAI API
-        self.encoding: tiktoken.Encoding = encoding
-        # Set interface to match HuggingFace
-        self.vocab_size = self.encoding.max_token_value + 1
-        self.bos_token_id = self.encoding.eot_token
-        self.eos_token_id = self.encoding.eot_token
-        self.pad_token_id = self.encoding.eot_token
-        self.unk_token_id = self.encoding.eot_token
-        self.eot_token = "<|endoftext|>"
-
-    def __len__(self):
-        return self.vocab_size
-
-    def __call__(
-        self,
-        text: str,
-        return_tensors: Literal["list", "pt", "np"] = "list",
-        **kwargs,
-    ):
-        _ = kwargs  # unused
-        if text is None:
-            return Encoded([])
-
-        if isinstance(text, list):
-            # Encode all special tokens as normal text
-            _ids = self.encoding.encode_batch(text, disallowed_special=())
-            max_len = max(len(i) for i in _ids)
-            input_ids = np.zeros((len(_ids), max_len), dtype=np.int64)
-            input_ids += self.pad_token_id
-            for i, _id in enumerate(_ids):
-                input_ids[i, : len(_id)] = _id
-        else:
-            input_ids = self.encoding.encode(text, disallowed_special=())
-            input_ids = np.array(input_ids, dtype=np.int64)
-
-        if return_tensors == "pt":
-            input_ids = torch.from_numpy(input_ids)
-        elif return_tensors == "list":
-            input_ids = input_ids.tolist()
-        return Encoded(input_ids)
-
-    def _parse_ids(self, ids):
-        return ids
-
-    def decode(self, ids, **kwargs) -> str:
-        _ = kwargs  # unused
-        if isinstance(ids, torch.Tensor):
-            ids = ids.tolist()
-        if isinstance(ids, int):
-            ids = [ids]
-        assert isinstance(ids, list) and isinstance(
-            ids[0], int
-        ), f"ids must be list or int, got {type(ids)} {ids}"
-        decoded = self.encoding.decode(ids)
-        return decoded.replace(self.eot_token, "")
-
-    def batch_decode(self, ids, **kwargs) -> list[str]:
-        _ = kwargs  # unused
-        if isinstance(ids, torch.Tensor):
-            ids = ids.tolist()
-        if isinstance(ids, int):
-            ids = [[ids]]
-        if isinstance(ids, list) and isinstance(ids[0], int):
-            ids = [ids]
-        assert (
-            isinstance(ids, list)
-            and isinstance(ids[0], list)
-            and isinstance(ids[0][0], int)
-        ), f"ids must be list of list of int, got {type(ids)} {ids}"
-        decoded_list = self.encoding.decode_batch(ids)
-        decoded_list = [s.replace(self.eot_token, "") for s in decoded_list]
-        return decoded_list
 
 
 class Response:
@@ -463,6 +388,7 @@ class OpenAIModel(BaseModel):
             target_logprobs: logprobs of target tokens.
             top_logprobs: logprobs of top tokens excluding target tokens.
             top_tokens: top tokens.
+            full_logps: full logprobs of responses.
             system_fingerprints: system fingerprints of responses.
         """
         responses, self._queues = standalone_server(
@@ -474,9 +400,10 @@ class OpenAIModel(BaseModel):
         )
         self._num_queries += len(prompts)
 
-        top_logps = [None for _ in enumerate(prompts)]
-        system_fingerprints = [None for _ in enumerate(prompts)]
-        top_toks = ["" for _ in enumerate(prompts)]
+        top_logps: list[float | None] = [None for _ in prompts]
+        system_fingerprints: list[str | None] = [None for _ in prompts]
+        top_toks: list[str | None] = ["" for _ in prompts]
+        full_logps: list[dict[str, float] | None] = [None for _ in prompts]
         # Set default target logprobs to 1 which is invalid because logprob
         # should be negative or zero.
         target_logps = np.ones(len(prompts))
@@ -489,20 +416,14 @@ class OpenAIModel(BaseModel):
             parsed_resp = _parse_response(response, self.api_type)
             system_fingerprints[i] = parsed_resp.system_fingerprint
             top_toks[i] = parsed_resp.top_tokens[0]
-            logger.debug(
-                "prompt=%s, full_logps=%s",
-                prompts[i],
-                parsed_resp.full_logprobs[0],
-            )
+            full_logps[i] = parsed_resp.full_logprobs[0]
+            logger.debug("prompt=%s, full_logps=%s", prompts[i], full_logps[i])
 
             # Check if any top-5 tokens match target
             for tok, lp in parsed_resp.full_logprobs[0].items():
                 # We decided to allow for space diffeeence here as the API
                 # does not seem to be consistent with space.
-                t = target_toks[i].strip()
-                tok_is_target = tok in (t, f" {t}")
-
-                if not tok_is_target:
+                if tok.strip() != target_toks[i].strip():
                     # Keep logprob of top token excluding target token
                     if top_logps[i] is None:
                         top_logps[i] = lp
@@ -514,22 +435,25 @@ class OpenAIModel(BaseModel):
                     lp,
                 )
                 if tok != target_toks[i]:
-                    logger.debug('Tok has space difference ("%s")', tok)
-                    if target_logps[i] == 1:
-                        # Only set logprob if it is not set yet; prefer one
-                        # with correct space.
-                        target_logps[i] = lp
-                else:
+                    logger.debug(
+                        'Tok and target have space difference ("%s" vs "%s")',
+                        tok,
+                        target_toks[i],
+                    )
+                if target_logps[i] == 1 or target_logps[i] < lp:
+                    # Only set logprob if it is not set yet or if it is larger
+                    # than the current target logprob.
                     target_logps[i] = lp
 
         return (
             target_logps,
             top_logps,
             top_toks,
+            full_logps,
             system_fingerprints,
         )
 
-    def _get_all_logprobs_score(
+    def _get_logprobs_score_echo(
         self,
         messages: list[Message],
         suffixes: list[str],
@@ -573,7 +497,7 @@ class OpenAIModel(BaseModel):
 
         # (3) Call API for the first time (no logit bias)
         out = self._get_first_response(prompts, target_toks)
-        target_logps, top_logps, top_tokens, system_fingerprints = out
+        target_logps, top_logps, top_tokens, _, system_fingerprints = out
 
         # Concatenate top tokens at each position to get outputs
         outputs = ["" for _ in range(num_suffixes)]
@@ -651,7 +575,7 @@ class OpenAIModel(BaseModel):
         self._assert_loss(losses, loss_func=loss_func, cw_margin=cw_margin)
         return outputs, losses
 
-    def _get_one_logprobs_score(
+    def _get_logprobs_score(
         self,
         messages: list[Message],
         suffixes: list[str],
@@ -660,6 +584,142 @@ class OpenAIModel(BaseModel):
         loss_func: str = "ce-all",
         cw_margin: float = 1e-3,
     ) -> tuple[list[str], list[float]]:
+        # (1) Build target prefixes
+        max_target_len = min(max_target_len, len(target_ids))
+        target_prefixes, target_toks = self._build_target_prefixes(
+            target_ids, max_target_len
+        )
+
+        goal = messages[1].content
+        losses: list[float] = [np.inf] * len(suffixes)
+        outputs: list[str] = ["" for _ in enumerate(suffixes)]
+        suffix_idxs = list(range(len(suffixes)))
+        best_target_len = 0
+
+        for target_idx in range(max_target_len):
+            tgt_tok = target_toks[target_idx]
+
+            # (2) Build prompts
+            prompts: list[str] = [""] * len(suffix_idxs)
+            for i, idx in enumerate(suffix_idxs):
+                suffix = suffixes[idx]
+                # TODO(task): append suffix
+                if suffix.startswith(" "):
+                    messages[1] = Message(Role.USER, f"{goal}{suffix}")
+                else:
+                    messages[1] = Message(Role.USER, f"{goal} {suffix}")
+                # Add target token one at a time
+                messages[2].content = target_prefixes[target_idx]
+                prompts[i] = build_prompt(
+                    messages if messages[2].content else messages[:2],
+                    template_name=self.template,
+                    return_openai_chat_format=self.api_type == "chat",
+                )
+
+            # (3) Call API (no logit bias)
+            logger.debug("Querying %d prompts", len(prompts))
+            out = self._get_first_response(prompts, [tgt_tok] * len(prompts))
+            target_logps, top_logps, top_toks, full_logps, _ = out
+
+            # Get index of successful suffix for next step and concat outputs
+            next_suffix_idxs, num_fails = [], 0
+            for i, idx in enumerate(suffix_idxs):
+                # Skip bad response
+                if top_logps[i] is None:
+                    continue
+                if top_toks[i] == "," or top_toks[i].startswith(" "):
+                    outputs[idx] = f"{outputs[idx]}{top_toks[i]}"
+                else:
+                    outputs[idx] = f"{outputs[idx]} {top_toks[i]}"
+
+                if top_toks[i].strip() == tgt_tok.strip():
+                    # Target token is top-1
+                    next_suffix_idxs.append(idx)
+                    assert 0 >= target_logps[i] > top_logps[i], (
+                        f"target_logps[{i}]={target_logps[i]} must be "
+                        f"non-positive and larger than top_logps[{i}]"
+                        f"={top_logps[i]}!\n{full_logps[i]}"
+                    )
+                elif target_logps[i] > 0:
+                    # Target token not in top-5
+                    # Approximate target prob as 1 - sum of prob of other tokens
+                    refuse_prob = sum(
+                        np.exp(lp) for lp in full_logps[i].values()
+                    )
+                    approx_target_lprob = np.log(1 - refuse_prob)
+                    target_logps[i] = approx_target_lprob
+                    logger.debug(
+                        "Approx. target prob: %.4f | full_logps: %s",
+                        1 - refuse_prob,
+                        full_logps[i],
+                    )
+                    num_fails += 1
+                else:
+                    # Target token is not top-1 but in top-5
+                    assert 0 >= top_logps[i] > target_logps[i], (
+                        f"top_logps[{i}]={top_logps[i]} must be "
+                        f"non-positive and larger than target_logps[{i}]"
+                        f"={target_logps[i]}!\n{full_logps[i]}"
+                    )
+                # Aggregate target logprobs for successful suffixes
+                if losses[idx] == np.inf and target_idx == 0:
+                    losses[idx] = 0.0
+                if "ce" in loss_func:
+                    losses[idx] -= target_logps[i]
+                else:
+                    losses[idx] += max(
+                        top_logps[i] - target_logps[i], -cw_margin
+                    )
+
+            num_top1 = len(next_suffix_idxs)
+            logger.debug(
+                'Target token "%s" (%d/%d): top-1=%d, top-5=%d, others=%d',
+                tgt_tok,
+                target_idx + 1,
+                max_target_len,
+                num_top1,
+                len(suffix_idxs) - num_top1 - num_fails,
+                num_fails,
+            )
+
+            # Prioritize successful suffixes. Set loss of unsuccessful suffixes
+            # to inf and ignore them in the next step.
+            if num_top1 > 0:
+                suffix_idxs = list(next_suffix_idxs)
+                continue
+
+            # We stop if there is at least one sample in top-5, assuming those
+            # not in top-5 will have higher loss.
+            if len(suffix_idxs) - num_top1 - num_fails > 0:
+                best_target_len = target_idx + 1
+                break
+
+            # Reach here when no target token is in top-5 in any prompt
+            best_target_len = target_idx
+            break
+
+        # NOTE: Add loss offset to indicate the best target length achieved
+        offset = (max_target_len - best_target_len) * 1e3
+        losses = [loss + offset for loss in losses]
+        suffix_idxs = set(suffix_idxs)
+        # Set loss of unsuccessful suffixes to inf
+        for i, _ in enumerate(losses):
+            if i not in suffix_idxs:
+                losses[i] = np.inf
+        self._assert_loss(losses, loss_func=loss_func, cw_margin=cw_margin)
+        return outputs, losses
+
+    def _get_logprobs_score_lb(
+        self,
+        messages: list[Message],
+        suffixes: list[str],
+        target_ids: TokenIds,
+        max_target_len: int = 32,
+        loss_func: str = "ce-all",
+        cw_margin: float = 1e-3,
+    ) -> tuple[list[str], list[float]]:
+        # DEPRECATED: This loss computation no longer works on OpenAI API
+        # because they disable logit bias' effect on logprobs.
         # (1) Build target prefixes
         max_target_len = min(max_target_len, len(target_ids))
         target_prefixes, target_toks = self._build_target_prefixes(
@@ -696,7 +756,7 @@ class OpenAIModel(BaseModel):
             # (3) Call API for the first time (no logit bias)
             logger.debug("Querying %d prompts", len(prompts))
             out = self._get_first_response(prompts, [tgt_tok] * len(prompts))
-            target_logps, top_logps, top_toks, system_fingerprints = out
+            target_logps, top_logps, top_toks, _, system_fingerprints = out
 
             # Get index of successful suffix for next step and concat outputs
             next_suffix_idxs, second_call_idxs = [], []
@@ -849,9 +909,12 @@ class OpenAIModel(BaseModel):
             raise NotImplementedError("echo-logprobs not implemented.")
         elif self._score_mode == "logprobs":
             if "one" in loss_func:
-                func = self._get_one_logprobs_score
+                func = self._get_logprobs_score
+            elif "lb" in loss_func:
+                # lb for logit bias (deprecated)
+                func = self._get_logprobs_score_lb
             else:
-                func = self._get_all_logprobs_score
+                func = self._get_logprobs_score_echo
             outputs, losses = func(
                 messages,
                 suffixes,
