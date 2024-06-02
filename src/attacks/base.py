@@ -346,7 +346,9 @@ class BaseAttack:
                 ).input_ids[0]
                 adv_suffix_ids[-num_failed - 1 :] = dummy
                 adv_suffix = self._tokenizer.decode(
-                    adv_suffix_ids, skip_special_tokens=True
+                    adv_suffix_ids,
+                    skip_special_tokens=True,
+                    clean_up_tokenization_spaces=False,
                 )
                 num_failed += 1
                 continue
@@ -406,7 +408,9 @@ class BaseAttack:
             # Filter out "invalid" adversarial suffixes
             adv_suffix_ids, num_valid = self._filter_suffixes(adv_suffix_ids)
             adv_suffixes = self._tokenizer.batch_decode(
-                adv_suffix_ids, skip_special_tokens=True
+                adv_suffix_ids,
+                skip_special_tokens=True,
+                clean_up_tokenization_spaces=False,
             )
             self._seen_suffixes.update(adv_suffixes)
             eval_input.suffix_ids = adv_suffix_ids

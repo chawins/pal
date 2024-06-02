@@ -179,10 +179,10 @@ class SuffixManager:
         )
 
         # DEBUG
-        # print("optim_slice:", self.tokenizer.decode(toks[optim_slice]))
-        # print("assistant_role_slice:", self.tokenizer.decode(toks[assistant_role_slice]))
-        # print("target_slice:", self.tokenizer.decode(toks[target_slice]))
-        # print("loss_slice:", self.tokenizer.decode(toks[loss_slice]))
+        # print("optim_slice:", self.tokenizer.decode(toks[optim_slice], clean_up_tokenization_spaces=False))
+        # print("assistant_role_slice:", self.tokenizer.decode(toks[assistant_role_slice], clean_up_tokenization_spaces=False))
+        # print("target_slice:", self.tokenizer.decode(toks[target_slice], clean_up_tokenization_spaces=False))
+        # print("loss_slice:", self.tokenizer.decode(toks[loss_slice], clean_up_tokenization_spaces=False))
         # import pdb; pdb.set_trace()
 
         # Don't need final sep tokens

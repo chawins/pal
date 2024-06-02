@@ -47,7 +47,9 @@ def _process_init_suffix(
         return tokenizer(text, add_special_tokens=False).input_ids
 
     def decode(ids):
-        return tokenizer.decode(ids, skip_special_tokens=True)
+        return tokenizer.decode(
+            ids, skip_special_tokens=True, clean_up_tokenization_spaces=False
+        )
 
     suffix_ids = encode(init_suffix)
     init_suffix_len = len(suffix_ids)

@@ -665,19 +665,34 @@ def to_string(tokenizer, token_ids_or_logits: torch.Tensor) -> str | list[str]:
     else:
         token_ids = token_ids_or_logits
     assert token_ids.ndim in (1, 2), token_ids.shape
+
     # Convert to strings
     if token_ids.ndim == 1:
-        strings = [tokenizer.decode(token_ids, skip_special_tokens=True)]
+        strings = [
+            tokenizer.decode(
+                token_ids,
+                skip_special_tokens=True,
+                clean_up_tokenization_spaces=False,
+            )
+        ]
         first_toks = [token_ids[0]]
     else:
-        strings = tokenizer.batch_decode(token_ids, skip_special_tokens=True)
+        strings = tokenizer.batch_decode(
+            token_ids,
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=False,
+        )
         first_toks = token_ids[:, 0]
 
     # Add metaspace if tokenizer dropped it
     new_strings = [""] * len(strings)
     num_spaces_added = 0
     for i, s in enumerate(strings):
-        if tokenizer.decode(first_toks[i]) == "" and s[0] != " ":
+        if (
+            tokenizer.decode(first_toks[i], clean_up_tokenization_spaces=False)
+            == ""
+            and s[0] != " "
+        ):
             # Llama tokenizer removes the leading meta-space token; add it back
             new_strings[i] = "▁" + s
             num_spaces_added += 1

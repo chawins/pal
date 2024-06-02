@@ -347,7 +347,9 @@ class TransformersModel(BaseModel):
             top_p=self.top_p,
         )
         response = self.tokenizer.decode(
-            output[0][prompt_len:], skip_special_tokens=True
+            output[0][prompt_len:],
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=False,
         )
         return [response]
 
@@ -392,7 +394,9 @@ class TransformersModel(BaseModel):
             device = suffix_ids.device
             _, orig_len = suffix_ids.shape
             decoded = self.tokenizer.batch_decode(
-                suffix_ids, skip_special_tokens=True
+                suffix_ids,
+                skip_special_tokens=True,
+                clean_up_tokenization_spaces=False,
             )
             encoded = self.tokenizer(
                 decoded,
@@ -414,7 +418,9 @@ class TransformersModel(BaseModel):
                 padding=True,
             ).input_ids.to(device)
             decoded = self.tokenizer.batch_decode(
-                encoded, skip_special_tokens=True
+                encoded,
+                skip_special_tokens=True,
+                clean_up_tokenization_spaces=False,
             )
             filter_cond = [s == d for s, d in zip(suffix, decoded)]
             filter_cond = torch.tensor(
@@ -670,7 +676,9 @@ class TransformersModel(BaseModel):
         for i in range(max_target_len):
             target_tok_id = target_ids[i]
             target_tok = self.tokenizer.decode(
-                target_tok_id, skip_special_tokens=True
+                target_tok_id,
+                skip_special_tokens=True,
+                clean_up_tokenization_spaces=False,
             )
             # Single space is ignored by non-GPT tokenizer
             if target_tok == "":
@@ -685,7 +693,9 @@ class TransformersModel(BaseModel):
 
             # Update output strings
             top_toks = self.tokenizer.batch_decode(
-                topk_tok_ids[:, 0], skip_special_tokens=True
+                topk_tok_ids[:, 0],
+                skip_special_tokens=True,
+                clean_up_tokenization_spaces=False,
             )
             for j, top_tok in enumerate(top_toks):
                 if cur_is_success[j]:

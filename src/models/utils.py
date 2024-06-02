@@ -84,15 +84,16 @@ def _load_huggingface_model_and_tokenizer(
         param.requires_grad = False
 
     tokenizer_path = tokenizer_path or model_path
-    if "Meta-Llama-3" in tokenizer_path:
-        # Llama-3's tokenizer on HuggingFace is not behaving correctly.
-        # Encode and then decode "! ! !" removes all space in
-        # transformers=4.42.
-        tokenizer = Llama3Tokenizer()
-    else:
-        tokenizer = AutoTokenizer.from_pretrained(
-            tokenizer_path, trust_remote_code=True, use_fast=False
-        )
+    # DEPRECATED: Llama-3's tokenizer on HuggingFace is not behaving
+    # correctly. Encode and then decode "! ! !" removes all space in
+    # transformers=4.42: https://github.com/huggingface/transformers/issues/31187
+    # if "Meta-Llama-3" in tokenizer_path:
+    #     # This behavior can be fixed by setting clean_up_tokenization_spaces=False
+    #     # during decoding.
+    #     tokenizer = Llama3Tokenizer()
+    tokenizer = AutoTokenizer.from_pretrained(
+        tokenizer_path, trust_remote_code=True, use_fast=False
+    )
     if not tokenizer.pad_token:
         tokenizer.pad_token = tokenizer.eos_token
 
@@ -141,7 +142,7 @@ def get_nonascii_toks(tokenizer, device="cpu") -> torch.Tensor:
     non_ascii_toks = []
     for i in range(3, tokenizer.vocab_size):
         try:
-            tok = tokenizer.decode([i])
+            tok = tokenizer.decode([i], clean_up_tokenization_spaces=False)
         except:  # noqa: E722, pylint: disable=bare-except
             # GPT tokenizer throws an error for some tokens
             # pyo3_runtime.PanicException: no entry found for key
@@ -174,7 +175,9 @@ def get_prefix_cache(
 ) -> tuple[PrefixCache, int]:
     static_input_ids = suffix_manager.get_input_ids(messages, static_only=True)
     static_input_str = tokenizer.decode(
-        static_input_ids, skip_special_tokens=True
+        static_input_ids,
+        skip_special_tokens=True,
+        clean_up_tokenization_spaces=False,
     )
     logger.info("Fixed prefix: %s", static_input_str)
     num_static_tokens = len(static_input_ids)
