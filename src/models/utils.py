@@ -12,6 +12,7 @@ from src.models.base import BaseModel
 from src.models.cohere import CohereModel, CohereTokenizer
 from src.models.openai import OpenAIModel
 from src.models.togetherai import TogetherAIModel
+from src.models.tokenizer import Llama3Tokenizer
 from src.utils.suffix import SuffixManager
 from src.utils.types import PrefixCache
 
@@ -104,11 +105,15 @@ def _load_huggingface_model_and_tokenizer(
         param.requires_grad = False
 
     tokenizer_path = tokenizer_path or model_path
-
-    tokenizer = AutoTokenizer.from_pretrained(
-        tokenizer_path, trust_remote_code=True, use_fast=False
-    )
-
+    if "Meta-Llama-3" in tokenizer_path:
+        # Llama-3's tokenizer on HuggingFace is not behaving correctly.
+        # Encode and then decode "! ! !" removes all space in
+        # transformers=4.42.
+        tokenizer = Llama3Tokenizer()
+    else:
+        tokenizer = AutoTokenizer.from_pretrained(
+            tokenizer_path, trust_remote_code=True, use_fast=False
+        )
     if not tokenizer.pad_token:
         tokenizer.pad_token = tokenizer.eos_token
 
@@ -142,9 +147,9 @@ def batchify_kv_cache(
         batch_prefix_cache.append(
             (k.repeat(batch_size, 1, 1, 1), v.repeat(batch_size, 1, 1, 1))
         )
-    cache = CustomCache.from_legacy_cache(batch_prefix_cache)
-    cache.static = True
-    return cache
+    # cache = CustomCache.from_legacy_cache(batch_prefix_cache)
+    # cache.static = True
+    return batch_prefix_cache
 
 
 def get_nonascii_toks(tokenizer, device="cpu") -> torch.Tensor:
@@ -178,6 +183,8 @@ def get_nonascii_toks(tokenizer, device="cpu") -> torch.Tensor:
         non_ascii_toks.append(tokenizer.pad_token_id)
     if tokenizer.unk_token_id is not None:
         non_ascii_toks.append(tokenizer.unk_token_id)
+    if isinstance(tokenizer, Llama3Tokenizer):
+        non_ascii_toks.extend(list(tokenizer.special_tokens.values()))
     non_ascii_toks = list(set(non_ascii_toks))
 
     logger.debug("Finished getting non-ascii tokens.")
@@ -204,7 +211,7 @@ def get_prefix_cache(
         input_embeds = embed_layer(static_input_ids.to(device)).unsqueeze(0)
         outputs = model(inputs_embeds=input_embeds, use_cache=True)
         prefix_cache = outputs.past_key_values
-        if not isinstance(prefix_cache, Cache):
-            prefix_cache = CustomCache.from_legacy_cache(prefix_cache)
-            prefix_cache.static = True
+        # if not isinstance(prefix_cache, Cache):
+        #     prefix_cache = CustomCache.from_legacy_cache(prefix_cache)
+        #     prefix_cache.static = True
     return prefix_cache, num_static_tokens

@@ -1,22 +1,21 @@
 import copy
 import logging
-from typing import Literal
 
 import cohere
 import numpy as np
 import torch
 
 from src.message import Message, Role
-from src.models.base import BaseModel, Encoded, LossOutput
+from src.models.base import BaseModel, LossOutput
 from src.models.model_input import ModelInputIds, ModelInputs
 from src.servers.cohere_server import (
     EXCEPT_COHERE_ERRORS,
     Queues,
     standalone_server,
 )
-from src.utils.cohere_non_ascii import COHERE_NON_ASCII
 from src.utils.suffix import SuffixManager, build_prompt
 from src.utils.types import BatchTokenIds
+from src.models.tokenizer import CohereTokenizer
 
 logger = logging.getLogger(__name__)
 
@@ -62,110 +61,6 @@ class Response:
         except StopIteration as e:
             self.complete = True
             raise e
-
-
-class CohereTokenizer:
-    non_ascii = COHERE_NON_ASCII
-
-    def __init__(self, model_name: str):
-        self._co = cohere.Client()
-        # Assume command/command-light model
-        self._model_name = model_name
-        # 0: '<PAD>'
-        # 1: '<UNK>'
-        # 2: '<CLS>'
-        # 3: '<SEP>'
-        # 4: '<MASK_TOKEN>'
-        # 5: '<BOS_TOKEN>'
-        # 6: '<EOS_TOKEN>'
-        # 7: '<EOP_TOKEN>'
-        # Set interface to match HuggingFace
-        self.vocab_size = 75500
-        self.bos_token_id = 5
-        self.eos_token_id = 6
-        self.pad_token_id = 0
-        self.unk_token_id = 1
-        self.eot_token = "<EOP_TOKEN>"  # Cohere uses EOP token instead of EOT
-
-    def __len__(self):
-        return self.vocab_size
-
-    def __call__(
-        self,
-        text: str | list[str],
-        return_tensors: Literal["list", "pt", "np"] = "list",
-        **kwargs,
-    ):
-        _ = kwargs  # unused
-        if text is None:
-            return Encoded([])
-
-        def tokenize(t):
-            try:
-                ids = self._co.tokenize(text=t, model=self._model_name).tokens
-            except EXCEPT_COHERE_ERRORS as e:
-                logger.warning("Error found in cohere.tokenize: %s", str(e))
-                return []
-            return ids
-
-        if isinstance(text, list):
-            # Encode all special tokens as normal text
-            _ids = [tokenize(t) for t in text]
-            max_len = max(len(i) for i in _ids)
-            input_ids = np.zeros((len(_ids), max_len), dtype=np.int64)
-            input_ids += self.pad_token_id
-            for i, _id in enumerate(_ids):
-                input_ids[i, : len(_id)] = _id
-        else:
-            input_ids = tokenize(text)
-            input_ids = np.array(input_ids, dtype=np.int64)
-
-        if return_tensors == "pt":
-            input_ids = torch.from_numpy(input_ids)
-        elif return_tensors == "list":
-            input_ids = input_ids.tolist()
-        return Encoded(input_ids)
-
-    def _parse_ids(self, ids):
-        return ids
-
-    def _detokenize(self, tokens: list[int]) -> str:
-        try:
-            text = self._co.detokenize(
-                tokens=tokens, model=self._model_name
-            ).text
-        except EXCEPT_COHERE_ERRORS as e:
-            logger.warning("Error found in cohere.detokenize: %s", str(e))
-            return ""
-        return text
-
-    def decode(self, ids, **kwargs) -> str:
-        _ = kwargs  # unused
-        if isinstance(ids, torch.Tensor):
-            ids = ids.tolist()
-        if isinstance(ids, int):
-            ids = [ids]
-        assert isinstance(ids, list) and isinstance(
-            ids[0], int
-        ), f"ids must be list or int, got {type(ids)} {ids}"
-        decoded = self._detokenize(ids)
-        return decoded
-
-    def batch_decode(self, ids, **kwargs) -> list[str]:
-        _ = kwargs  # unused
-        if isinstance(ids, torch.Tensor):
-            ids = ids.tolist()
-        if isinstance(ids, int):
-            ids = [[ids]]
-        if isinstance(ids, list) and isinstance(ids[0], int):
-            ids = [ids]
-        assert (
-            isinstance(ids, list)
-            and isinstance(ids[0], list)
-            and isinstance(ids[0][0], int)
-        ), f"ids must be list of list of int, got {type(ids)} {ids}"
-        decoded_list = [self._detokenize(i) for i in ids]
-        return decoded_list
 
 
 class CohereModel(BaseModel):

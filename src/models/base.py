@@ -1,5 +1,5 @@
 import dataclasses
-from typing import Iterable, List
+from typing import Any, Iterable, List
 
 import numpy as np
 import torch
@@ -24,9 +24,29 @@ class LossOutput:
     num_tokens: int = 0
 
 
-@dataclasses.dataclass
-class Encoded:
-    input_ids: torch.Tensor | list[int] | np.ndarray
+class Encoded(dict):
+    def __init__(
+        self,
+        input_ids: torch.Tensor | list[int] | np.ndarray,
+        attention_mask: torch.Tensor | None = None,
+    ) -> None:
+        self.input_ids = input_ids
+        self.attention_mask = attention_mask
+
+    def __getitem__(self, name: str) -> Any:
+        if name == "input_ids":
+            return self.input_ids
+        if name == "attention_mask":
+            return self.attention_mask
+        raise KeyError(f"Unknown key: {name}")
+
+    def __setitem__(self, name: str, value: Any) -> None:
+        if name == "input_ids":
+            self.input_ids = value
+        elif name == "attention_mask":
+            self.attention_mask = value
+        else:
+            raise KeyError(f"Unknown key: {name}")
 
 
 class BaseModel:

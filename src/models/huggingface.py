@@ -21,6 +21,7 @@ from src.message import Message
 from src.models.base import BaseModel, LossOutput, NaNLossError
 from src.models.llama2_train_config import train_config as TRAIN_CONFIG
 from src.models.model_input import ModelInputIds, ModelInputs
+from src.models.tokenizer import Llama3Tokenizer
 from src.models.utils import batchify_kv_cache, get_prefix_cache
 from src.utils.suffix import SuffixManager, build_prompt
 from src.utils.types import BatchTokenIds, PrefixCache
@@ -142,10 +143,9 @@ class TransformersModel(BaseModel):
                 self.checkpoint_path,
                 torch_dtype=model_dtype,
                 low_cpu_mem_usage=False,
-                use_cache=False,
+                use_cache=True,
                 load_in_8bit=True if quant else None,
                 device_map="auto" if quant else None,
-                # device_map="auto",  # EDIT
             )
             if not quant:
                 self.model.to(self.device)
@@ -154,9 +154,15 @@ class TransformersModel(BaseModel):
                     "4-bit and 8-bit bitsandbytes model is assigned a device "
                     "automatically. It does not support multi-GPU."
                 )
-            self.tokenizer = transformers.AutoTokenizer.from_pretrained(
-                self.checkpoint_path
-            )
+            if "Meta-Llama-3" in self.checkpoint_path:
+                # Llama-3's tokenizer on HuggingFace is not behaving correctly.
+                # Encode and then decode "! ! !" removes all space in
+                # transformers=4.42.
+                self.tokenizer = Llama3Tokenizer()
+            else:
+                self.tokenizer = transformers.AutoTokenizer.from_pretrained(
+                    self.checkpoint_path
+                )
             if not self.tokenizer.pad_token:
                 self.tokenizer.pad_token = self.tokenizer.eos_token
 
@@ -447,7 +453,6 @@ class TransformersModel(BaseModel):
         max_target_len: int = 32,
         loss_func: str = "ce-all",
         cw_margin: float = 1e-3,
-        use_cache: bool = False,
         **kwargs,
     ) -> LossOutput:
         _ = kwargs  # Unused
@@ -507,7 +512,6 @@ class TransformersModel(BaseModel):
                 temperature=temperature,
                 loss_func=loss_func,
                 cw_margin=cw_margin,
-                use_cache=use_cache,
             )
             loss_list.append(loss)
             logits_list.append(logits)
@@ -529,7 +533,6 @@ class TransformersModel(BaseModel):
         max_target_len: int | None = None,
         loss_func: str = "ce-all",
         cw_margin: float = 1e-3,
-        use_cache: bool = False,
         **kwargs,
     ) -> LossOutput:
         """Compute loss given multiple suffixes.
@@ -600,7 +603,6 @@ class TransformersModel(BaseModel):
                 temperature=temperature,
                 loss_func=loss_func,
                 cw_margin=cw_margin,
-                use_cache=use_cache,
             )
             loss_list.append(loss)
             logits_list.append(logits)
@@ -762,7 +764,6 @@ class TransformersModel(BaseModel):
         temperature: float = 1.0,
         loss_func: str = "ce-all",
         cw_margin: float = 1e-3,
-        use_cache: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         num_samples = num_samples or len(batch_input_ids)
         input_embeds = self.embed_layer(batch_input_ids)
@@ -771,7 +772,6 @@ class TransformersModel(BaseModel):
         logits = self.model(
             inputs_embeds=input_embeds,
             past_key_values=self._get_batch_prefix_cache(len(batch_input_ids)),
-            use_cache=use_cache,
         ).logits[:num_samples]
 
         # loss_logits: [batch_size, loss_len, vocab_size]
@@ -843,7 +843,7 @@ class TransformersModel(BaseModel):
             logits = self.model(
                 inputs_embeds=input_embeds,
                 past_key_values=self._get_batch_prefix_cache(len(input_embeds)),
-                use_cache=False,
+                use_cache=True,
             ).logits
             # Compute loss and gradients
             loss_logits = logits[:, loss_slice].squeeze(0)

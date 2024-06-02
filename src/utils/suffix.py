@@ -4,11 +4,13 @@ import logging
 
 import torch
 from fastchat.conversation import get_conv_template
+from transformers import AutoTokenizer
+
+from src.message import Message, Role
+from src.models.model_input import ModelInputIds
 
 # Register new conv. pylint: disable=unused-import
 from src.utils import cohere_conv, gpt_conv  # noqa: F401
-from src.message import Message, Role
-from src.models.model_input import ModelInputIds
 
 logger = logging.getLogger(__name__)
 
@@ -38,10 +40,17 @@ class SuffixManager:
             use_system_instructions: Whether to use system instructions.
             conv_template: Conversation template.
         """
-        logger.debug("Initializing SuffixManager...")
         self.tokenizer = tokenizer
         self.use_system_instructions = use_system_instructions
         self.conv_template = conv_template
+        self.is_tiktoken = not isinstance(tokenizer, AutoTokenizer)
+        logger.info(
+            "SuffixManager initialized with conv_template=%s, is_tiktoken=%s, "
+            "use_system_instructions=%s",
+            self.conv_template.name,
+            self.is_tiktoken,
+            use_system_instructions,
+        )
 
         self.num_tok_sep = len(
             self.tokenizer(
@@ -52,15 +61,22 @@ class SuffixManager:
             # Space is subsumed by following token in GPT tokenizer
             assert self.conv_template.sep == " ", self.conv_template.sep
             self.num_tok_sep = 0
+        elif self.conv_template.name == "llama-3":
+            # FastChat adds <|eot_id|> after each message, but it's not sep.
+            # Not exactly sure why, but not we need to manually set
+            # self.num_tok_sep because sep is just "".
+            # https://github.com/lm-sys/FastChat/blob/main/fastchat/conversation.py#L167
+            self.num_tok_sep = 1
 
+        self.num_tok_sep2 = 0
         if self.conv_template.sep2 not in (None, ""):
             self.num_tok_sep2 = len(
                 self.tokenizer(
                     self.conv_template.sep2, add_special_tokens=False
                 ).input_ids
             )
-        else:
-            self.num_tok_sep2 = 0
+        if self.conv_template.stop_str not in (None, ""):
+            self.num_tok_sep2 += 1
 
     @torch.no_grad()
     def get_input_ids(
@@ -135,10 +151,8 @@ class SuffixManager:
 
         # user msg + adv suffix
         if user_msg:
-            if (
-                adv_suffix.startswith(" ")
-                and self.conv_template.name in ("chatgpt", "cohere")
-            ):
+            if adv_suffix.startswith(" ") and self.is_tiktoken:
+                # NOTE: space is part of token in tiktoken, i.e., " !" != "!".
                 self.conv_template.update_last_message(
                     f"{user_msg}{adv_suffix}"
                 )
@@ -169,8 +183,7 @@ class SuffixManager:
         # print("assistant_role_slice:", self.tokenizer.decode(toks[assistant_role_slice]))
         # print("target_slice:", self.tokenizer.decode(toks[target_slice]))
         # print("loss_slice:", self.tokenizer.decode(toks[loss_slice]))
-        # import pdb
-        # pdb.set_trace()
+        # import pdb; pdb.set_trace()
 
         # Don't need final sep tokens
         input_ids = torch.tensor(toks[: target_slice.stop])

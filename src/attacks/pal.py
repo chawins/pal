@@ -25,7 +25,7 @@ from src.models.model_input import (
     SuffixIds,
 )
 from src.models.mp_huggingface import MpTransformersModel
-from src.models.openai import GptTokenizer
+from src.models.tokenizer import GptTokenizer
 from src.models.utils import get_nonascii_toks
 from src.utils.suffix import SuffixManager
 

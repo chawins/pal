@@ -247,7 +247,7 @@ def main(argv):
     loaded = models_utils.load_model_and_tokenizer(
         args.model,
         low_cpu_mem_usage=True,
-        use_cache=False,
+        # use_cache=False,  # FIXME
         device="cuda" if torch.cuda.is_available() else "cpu",
         system_message=args.system_message,
         use_system_instructions=args.use_system_instructions,

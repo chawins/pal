@@ -238,7 +238,6 @@ class BaseAttack:
             max_target_len=self._cur_seq_len,
             loss_func=self._loss_func,
             cw_margin=self._cw_margin,
-            # use_cache=True,
         )
         self._num_queries += output.num_queries
         return output.losses
@@ -454,7 +453,6 @@ class BaseAttack:
             loss_func=self._loss_func,
             cw_margin=self._cw_margin,
             max_target_len=self._cur_seq_len,
-            # use_cache=True,
         ).losses
         self._save_best(loss.min().item(), adv_suffix)
 
