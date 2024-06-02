@@ -2,10 +2,6 @@
 export WANDB_MODE=disabled
 export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
 
-# Set path to tokenizer.model downloaded from https://llama.meta.com/llama-downloads/.
-# Tokenizer from transformers (4.42) is not correct.
-export LLAMA3_TOKENIZER_PATH="$HOME/data/models/llama3_tokenizer.model"
-
 ATTACK="gcg"
 
 python -u main.py \

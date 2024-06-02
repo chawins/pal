@@ -40,7 +40,7 @@ filelock==3.12.2
 fire==0.5.0
 fonttools==4.40.0
 frozenlist==1.3.3
-fschat==0.2.32
+fschat
 fsspec==2023.6.0
 ftfy==6.1.1
 gdown==4.7.1
@@ -182,7 +182,7 @@ tensorboardX==2.6.1
 termcolor==2.3.0
 texttable==1.6.7
 threadpoolctl==3.1.0
-tiktoken==0.4.0
+tiktoken
 tokenize-rt==5.2.0
 tokenizers==0.14.1
 toml==0.10.2
@@ -193,7 +193,7 @@ torch==2.0.1
 torchaudio==2.0.2
 torchvision==0.15.2
 tqdm==4.65.0
-transformers==4.35.2
+transformers
 triton==2.0.0
 typeguard==2.13.3
 typing_extensions==4.7.0

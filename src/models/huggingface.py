@@ -21,7 +21,6 @@ from src.message import Message
 from src.models.base import BaseModel, LossOutput, NaNLossError
 from src.models.llama2_train_config import train_config as TRAIN_CONFIG
 from src.models.model_input import ModelInputIds, ModelInputs
-from src.models.tokenizer import Llama3Tokenizer
 from src.models.utils import batchify_kv_cache, get_prefix_cache
 from src.utils.suffix import SuffixManager, build_prompt
 from src.utils.types import BatchTokenIds, PrefixCache
@@ -154,15 +153,9 @@ class TransformersModel(BaseModel):
                     "4-bit and 8-bit bitsandbytes model is assigned a device "
                     "automatically. It does not support multi-GPU."
                 )
-            if "Meta-Llama-3" in self.checkpoint_path:
-                # Llama-3's tokenizer on HuggingFace is not behaving correctly.
-                # Encode and then decode "! ! !" removes all space in
-                # transformers=4.42.
-                self.tokenizer = Llama3Tokenizer()
-            else:
-                self.tokenizer = transformers.AutoTokenizer.from_pretrained(
-                    self.checkpoint_path
-                )
+            self.tokenizer = transformers.AutoTokenizer.from_pretrained(
+                self.checkpoint_path
+            )
             if not self.tokenizer.pad_token:
                 self.tokenizer.pad_token = self.tokenizer.eos_token
 
