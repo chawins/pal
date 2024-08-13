@@ -394,8 +394,13 @@ class BaseAttack:
             )[0][num_fixed_tokens:]
             dynamic_input_ids = dynamic_input_ids.to("cuda")
             optim_ids = dynamic_input_ids[optim_slice]
-            eval_input.dynamic_input_ids = dynamic_input_ids
-            eval_input.suffix_ids = optim_ids
+            try:
+                eval_input.dynamic_input_ids = dynamic_input_ids
+                eval_input.suffix_ids = optim_ids
+            except LengthMismatchError as e:
+                logger.warning('Failing with suffix: "%s"', adv_suffix)
+                logger.warning(str(e))
+                logger.warning("Re-running the step...")
 
             # Compute grad as needed (None if no-grad attack)
             # pylint: disable=assignment-from-none

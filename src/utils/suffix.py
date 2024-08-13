@@ -1,10 +1,12 @@
 """Suffix manager for adversarial suffix generation."""
 
+import dataclasses
 import logging
 
+import fastchat  # type: ignore
 import torch
-from fastchat.conversation import get_conv_template
-from transformers import AutoTokenizer
+from fastchat.conversation import get_conv_template  # type: ignore
+from transformers import PreTrainedTokenizer
 
 from src.message import Message, Role
 from src.models.model_input import ModelInputIds
@@ -15,12 +17,59 @@ from src.utils import cohere_conv, gpt_conv  # noqa: F401
 logger = logging.getLogger(__name__)
 
 
+@dataclasses.dataclass
+class Llama3Conversation(fastchat.conversation.Conversation):
+    def get_prompt(self) -> str:
+        """Get the prompt for generation."""
+        system_prompt = self.system_template.format(
+            system_message=self.system_message
+        )
+        # ret = "<|begin_of_text|>"  # This is added by tokenizer
+        ret = ""
+        if self.system_message:
+            ret = system_prompt
+        for role, message in self.messages:
+            if message:
+                ret += f"<|start_header_id|>{role}<|end_header_id|>\n\n"
+                ret += f"{message.strip()}<|eot_id|>"
+            else:
+                ret += f"<|start_header_id|>{role}<|end_header_id|>\n\n"
+        return ret
+
+    def copy(self):
+        return Llama3Conversation(
+            name=self.name,
+            system_template=self.system_template,
+            system_message=self.system_message,
+            roles=self.roles,
+            messages=[[x, y] for x, y in self.messages],
+            offset=self.offset,
+            sep_style=self.sep_style,
+            sep=self.sep,
+            sep2=self.sep2,
+            stop_str=self.stop_str,
+            stop_token_ids=self.stop_token_ids,
+        )
+
+
+fastchat.conversation.register_conv_template(
+    Llama3Conversation(
+        name="pal-llama-3",
+        system_template="<|start_header_id|>system<|end_header_id|>\n\n{system_message}<|eot_id|>",
+        roles=("user", "assistant"),
+        sep="",
+        stop_str="<|eot_id|>",
+        stop_token_ids=[128001, 128009],
+    )
+)
+
+
 class SuffixManager:
     """Suffix manager for adversarial suffix generation."""
 
     valid_templates = (
         "llama-2",
-        "llama-3",
+        "pal-llama-3",
         "vicuna_v1.1",
         "mistral",
         "chatgpt",
@@ -43,7 +92,7 @@ class SuffixManager:
         self.tokenizer = tokenizer
         self.use_system_instructions = use_system_instructions
         self.conv_template = conv_template
-        self.is_tiktoken = not isinstance(tokenizer, AutoTokenizer)
+        self.is_tiktoken = not isinstance(tokenizer, PreTrainedTokenizer)
         logger.info(
             "SuffixManager initialized with conv_template=%s, is_tiktoken=%s, "
             "use_system_instructions=%s",
@@ -61,7 +110,7 @@ class SuffixManager:
             # Space is subsumed by following token in GPT tokenizer
             assert self.conv_template.sep == " ", self.conv_template.sep
             self.num_tok_sep = 0
-        elif self.conv_template.name == "llama-3":
+        elif "llama-3" in self.conv_template.name:
             # FastChat adds <|eot_id|> after each message, but it's not sep.
             # Not exactly sure why, but not we need to manually set
             # self.num_tok_sep because sep is just "".

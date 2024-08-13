@@ -59,6 +59,7 @@ SYSTEM_MESSAGES = {
         " and harmless and you follow ethical guidelines and promote positive "
         "behavior."
     ),
+    "llama3_default": "You are a helpful assistant",
 }
 
 

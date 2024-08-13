@@ -10,7 +10,6 @@ from src.models.base import BaseModel
 from src.models.cohere import CohereModel, CohereTokenizer
 from src.models.openai import OpenAIModel
 from src.models.togetherai import TogetherAIModel
-from src.models.tokenizer import Llama3Tokenizer
 from src.utils.suffix import SuffixManager
 from src.utils.types import PrefixCache
 
@@ -159,8 +158,6 @@ def get_nonascii_toks(tokenizer, device="cpu") -> torch.Tensor:
         non_ascii_toks.append(tokenizer.pad_token_id)
     if tokenizer.unk_token_id is not None:
         non_ascii_toks.append(tokenizer.unk_token_id)
-    if isinstance(tokenizer, Llama3Tokenizer):
-        non_ascii_toks.extend(list(tokenizer.special_tokens.values()))
     non_ascii_toks = list(set(non_ascii_toks))
 
     logger.debug("Finished getting non-ascii tokens.")
@@ -175,9 +172,7 @@ def get_prefix_cache(
 ) -> tuple[PrefixCache, int]:
     static_input_ids = suffix_manager.get_input_ids(messages, static_only=True)
     static_input_str = tokenizer.decode(
-        static_input_ids,
-        skip_special_tokens=True,
-        clean_up_tokenization_spaces=False,
+        static_input_ids, clean_up_tokenization_spaces=False
     )
     logger.info("Fixed prefix: %s", static_input_str)
     num_static_tokens = len(static_input_ids)
