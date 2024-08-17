@@ -6,7 +6,6 @@ import logging
 import fastchat  # type: ignore
 import torch
 from fastchat.conversation import get_conv_template  # type: ignore
-from transformers import PreTrainedTokenizer
 
 from src.message import Message, Role
 from src.models.model_input import ModelInputIds
@@ -92,12 +91,10 @@ class SuffixManager:
         self.tokenizer = tokenizer
         self.use_system_instructions = use_system_instructions
         self.conv_template = conv_template
-        self.is_tiktoken = not isinstance(tokenizer, PreTrainedTokenizer)
         logger.info(
-            "SuffixManager initialized with conv_template=%s, is_tiktoken=%s, "
+            "SuffixManager initialized with conv_template=%s, "
             "use_system_instructions=%s",
             self.conv_template.name,
-            self.is_tiktoken,
             use_system_instructions,
         )
 
@@ -200,7 +197,7 @@ class SuffixManager:
 
         # user msg + adv suffix
         if user_msg:
-            if adv_suffix.startswith(" ") and self.is_tiktoken:
+            if adv_suffix.startswith(" "):
                 # NOTE: space is part of token in tiktoken, i.e., " !" != "!".
                 self.conv_template.update_last_message(
                     f"{user_msg}{adv_suffix}"
